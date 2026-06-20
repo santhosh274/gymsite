@@ -134,10 +134,8 @@ async function main() {
 
   // 1) Create admin auth user and admin role (single admin id)
   const adminId = "ADMIN001";
-  const adminPassword = "admin123";
+  const adminPassword = "admintest";
 
-  // We need an email for admin auth. If your Excel includes it, we’ll use it.
-  // Otherwise, create a placeholder admin email from the adminId.
   const adminRow = rows.find((r) => cleanCell(r[COL_IDNO]) === adminId);
   const adminEmail = cleanCell(adminRow?.[COL_EMAIL]) || `admin001@${adminId.toLowerCase()}.local`;
   const adminFullName = cleanCell(adminRow?.[COL_FULLNAME]) || "SRGYM Admin";
@@ -150,9 +148,6 @@ async function main() {
 
   await upsertRole(adminUser.id, "admin");
 
-  // Also upsert into profiles if that table expects id matching auth user id.
-  // In this app, profiles.id is used as user id everywhere.
-  // So we insert profile rows with id = auth user id.
   const { error: profErrAdmin } = await SUPABASE.from("profiles").upsert(
     {
       id: adminUser.id,
@@ -166,7 +161,6 @@ async function main() {
       updated_at: new Date().toISOString(),
       date_of_birth: null,
       photo_url: null,
-      // Note: if your profiles schema has extra NOT NULL fields, add them here.
     },
     { onConflict: "id" }
   );
@@ -178,9 +172,8 @@ async function main() {
     if (!idNoRaw) continue;
 
     const memberId = normalizeIdNo(idNoRaw);
-    if (memberId === adminId) continue; // already created
+    if (memberId === adminId) continue;
 
-    // Auth email required.
     const email = cleanCell(r[COL_EMAIL]);
     const full_name = cleanCell(r[COL_FULLNAME]);
 
@@ -222,11 +215,76 @@ async function main() {
     );
 
     if (profErr) throw profErr;
+  }
 
-    // If you have a dedicated member_id field separate from auth user id, add it here.
-    // Your request says “member id should be exact as idno like SR1”,
-    // but the current codebase uses profiles.id as the user id.
-    // So we are ensuring the auth user is created per Excel row.
+  // ========== Auth table seeding ==========
+  // Verify the auth table exists before proceeding
+  console.log("Checking if auth table exists...");
+  const { error: authCheckErr } = await SUPABASE.from("auth").select("id", { count: "exact", head: true }).limit(1);
+  if (authCheckErr) {
+    console.error("\n✗ The 'auth' table does not exist or is not accessible.");
+    console.error("  Please apply the migration first:");
+    console.error("  1. Go to https://supabase.com/dashboard/project/lqvdysnkbcereccvbnfk");
+    console.error("  2. Open the SQL Editor");
+    console.error("  3. Paste and run the contents of: supabase/migrations/20260620000000_create_auth_table.sql");
+    console.error("  4. Then re-run this seed script.\n");
+    process.exit(1);
+  }
+
+  // Create the test auth users: admin123 and member123
+  const testAdminId = "admin123";
+  const testMemberId = "member123";
+
+  const testAdminEmail = `${testAdminId}@srgym.local`;
+  const testMemberEmail = `${testMemberId}@srgym.local`;
+
+  console.log("Creating test auth user: admin123...");
+  const testAdminUser = await ensureAuthUser({
+    email: testAdminEmail,
+    password: "admintest",
+    full_name: "Admin Test",
+  });
+  await upsertRole(testAdminUser.id, "admin");
+
+  console.log("Creating test auth user: member123...");
+  const testMemberUser = await ensureAuthUser({
+    email: testMemberEmail,
+    password: "membertest",
+    full_name: "Member Test",
+  });
+  await upsertRole(testMemberUser.id, "member");
+
+  // Populate auth table with all credentials
+  console.log("Populating auth table...");
+
+  // Helper to insert into auth table
+  async function upsertAuth(userId: string, password: string, role: Role, email: string) {
+    await SUPABASE.from("auth").delete().eq("user_id", userId);
+    const { error } = await SUPABASE.from("auth").insert({
+      user_id: userId,
+      password,
+      role,
+      email,
+    });
+    if (error) throw error;
+    console.log(`  Auth entry: ${userId} / ${password} → ${email} (${role})`);
+  }
+
+  // Admin entries
+  await upsertAuth(adminId, adminPassword, "admin", adminEmail);
+  await upsertAuth(testAdminId, "admintest", "admin", testAdminEmail);
+
+  // Member entries
+  await upsertAuth(testMemberId, "membertest", "member", testMemberEmail);
+
+  for (const r of rows) {
+    const idNoRaw = cleanCell(r[COL_IDNO]);
+    if (!idNoRaw) continue;
+    const memberId = normalizeIdNo(idNoRaw);
+    const email = cleanCell(r[COL_EMAIL]);
+    if (!email) continue;
+    const password = inferMemberPassword(memberId);
+    await upsertAuth(memberId, password, "member", email);
   }
 
   console.log("Seeding complete.");

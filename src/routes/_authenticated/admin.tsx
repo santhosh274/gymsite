@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import {
   Users, CreditCard, ClipboardList, Calendar, BellRing, Trophy, Search, Plus, Trash2,
   CheckCircle2, XCircle, Megaphone, Download, IndianRupee, TrendingUp, Activity, ShieldOff,
+  Eye, EyeOff, UserPlus,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { AppShell } from "@/components/app-shell";
@@ -133,15 +134,10 @@ function Stat({ icon: Icon, label, value, sub, tone = "ok" }: any) {
 function MembersTab() {
   const qc = useQueryClient();
   const [q, setQ] = useState("");
+  const [refreshKey, setRefreshKey] = useState(0);
   const { data: members = [] } = useQuery({
-    queryKey: ["mem-list"],
-    queryFn: async () =>
-      (
-        await supabase
-          .from("profiles")
-          .select("*, memberships(end_date, status, plan_id, membership_plans(name))")
-          .order("joined_at", { ascending: false })
-      ).data ?? [],
+    queryKey: ["mem-list", refreshKey],
+    queryFn: async () => (await supabase.rpc("admin_get_members")).data ?? [],
   });
 
   const filtered = members.filter((m: any) =>
@@ -152,9 +148,15 @@ function MembersTab() {
     <Card>
       <CardHeader className="flex flex-row items-center justify-between gap-3">
         <CardTitle className="text-base">Members</CardTitle>
-        <div className="flex w-full max-w-xs items-center gap-2">
-          <Search className="h-4 w-4 text-muted-foreground" />
-          <Input placeholder="Search name / email / phone" value={q} onChange={(e) => setQ(e.target.value)} />
+        <div className="flex items-center gap-2">
+          <div className="flex w-full max-w-xs items-center gap-2">
+            <Search className="h-4 w-4 text-muted-foreground" />
+            <Input placeholder="Search name / email / phone" value={q} onChange={(e) => setQ(e.target.value)} />
+          </div>
+          <AddUserDialog onDone={() => setRefreshKey((k) => k + 1)} />
+          <Button variant="outline" size="sm" onClick={() => exportMembersCSV(filtered)}>
+            <Download className="mr-1.5 h-4 w-4" /> Export CSV
+          </Button>
         </div>
       </CardHeader>
       <CardContent className="overflow-auto p-0">
@@ -204,6 +206,132 @@ function MembersTab() {
         </table>
       </CardContent>
     </Card>
+  );
+}
+
+function exportMembersCSV(members: any[]) {
+  if (!members.length) return toast.info("Nothing to export");
+  const headers = ["Name", "Email", "Phone", "Plan", "Expires", "Status", "Joined"];
+  const rows = members.map((m: any) => {
+    const latest = m.memberships?.sort((a: any, b: any) => (a.end_date < b.end_date ? 1 : -1))[0];
+    const expired = latest ? daysBetween(latest.end_date) < 0 : true;
+    return [
+      m.full_name ?? "",
+      m.email ?? "",
+      m.phone ?? "",
+      latest?.membership_plans?.name ?? "—",
+      latest ? fmtDate(latest.end_date) : "—",
+      expired ? "Expired" : latest ? "Active" : "No plan",
+      fmtDate(m.joined_at),
+    ];
+  });
+  const csv = [headers.join(","), ...rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","))].join("\n");
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = `members-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function AddUserDialog({ onDone }: { onDone: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [idNo, setIdNo] = useState("");
+  const [password, setPassword] = useState("");
+  const [fullName, setFullName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [showPw, setShowPw] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!idNo || !password || !fullName) return toast.error("ID No, password, and name are required.");
+
+    setLoading(true);
+    const email = `${idNo.trim().toLowerCase()}@srgym.local`;
+
+    try {
+      // 1. Save current admin session
+      const { data: sessionData } = await supabase.auth.getSession();
+      const adminToken = sessionData.session?.access_token;
+      const adminRefresh = sessionData.session?.refresh_token;
+      const adminUserId = sessionData.session?.user?.id;
+      if (!adminToken) throw new Error("No admin session");
+
+      // 2. Create auth user via signUp (auto-confirmed since email confirm is disabled)
+      const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({
+        email,
+        password,
+        options: { data: { full_name: fullName.trim(), phone: phone.trim() } },
+      });
+      if (signUpErr) throw signUpErr;
+      if (!signUpData?.user) throw new Error("Signup returned no user");
+
+      // 3. Restore admin session and verify it worked
+      const { error: restoreErr } = await supabase.auth.setSession({
+        access_token: adminToken,
+        refresh_token: adminRefresh!,
+      });
+      if (restoreErr) throw new Error(`Failed to restore admin session: ${restoreErr.message}`);
+
+      const { data: verifySession } = await supabase.auth.getSession();
+      if (verifySession.session?.user?.id !== adminUserId)
+        throw new Error("Session was not properly restored");
+
+      // 4. Create auth mapping via RPC
+      const { error: rpcErr } = await supabase.rpc("admin_create_user", {
+        p_id_no: idNo.trim(),
+        p_password: password,
+        p_email: email,
+      });
+      if (rpcErr) throw rpcErr;
+
+      toast.success(`User "${fullName}" created (ID: ${idNo})`);
+      setOpen(false);
+      setIdNo(""); setPassword(""); setFullName(""); setPhone("");
+      onDone();
+    } catch (err: any) {
+      toast.error(err.message || "Failed to create user");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button size="sm"><UserPlus className="mr-1.5 h-4 w-4" /> Add User</Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader><DialogTitle>Add new user</DialogTitle></DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <Label htmlFor="au-idno">ID No</Label>
+            <Input id="au-idno" value={idNo} onChange={(e) => setIdNo(e.target.value)} placeholder="e.g. newmember1" required />
+          </div>
+          <div>
+            <Label htmlFor="au-name">Full Name</Label>
+            <Input id="au-name" value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="e.g. John Doe" required />
+          </div>
+          <div>
+            <Label htmlFor="au-phone">Phone</Label>
+            <Input id="au-phone" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="e.g. 9876543210" />
+          </div>
+          <div>
+            <Label htmlFor="au-pw">Password</Label>
+            <div className="relative">
+              <Input id="au-pw" type={showPw ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} required />
+              <button type="button" onClick={() => setShowPw(!showPw)} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground">
+                {showPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground">Email will be auto-generated: <span className="font-mono">[idno]@srgym.local</span></p>
+          <Button type="submit" disabled={loading} className="w-full bg-gradient-red text-primary-foreground">
+            {loading ? "Creating..." : "Create User"}
+          </Button>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 

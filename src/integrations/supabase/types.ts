@@ -14,6 +14,33 @@ export type Database = {
   }
   public: {
     Tables: {
+      auth: {
+        Row: {
+          created_at: string
+          email: string
+          id: string
+          password: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          email: string
+          id?: string
+          password: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          email?: string
+          id?: string
+          password?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id?: string
+        }
+        Relationships: []
+      }
       attendance: {
         Row: {
           check_in: string
@@ -422,6 +449,18 @@ export type Database = {
           _user_id: string
         }
         Returns: boolean
+      }
+      admin_create_user: {
+        Args: {
+          p_id_no: string
+          p_password: string
+          p_email: string
+        }
+        Returns: Record<string, string>
+      }
+      admin_get_members: {
+        Args: Record<string, never>
+        Returns: Record<string, unknown>[]
       }
     }
     Enums: {

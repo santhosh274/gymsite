@@ -9,8 +9,6 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogTrigger,
-} from "@/components/ui/dialog";
 
 
 export const Route = createFileRoute("/auth")({
@@ -82,39 +80,46 @@ function LoginForm() {
 
     setLoading(true);
 
-    // Your DB schema uses UUID for profiles.id.
-    // If your Excel “id no” is stored in a different column, update this lookup.
-    // For now, we fetch the auth email from profiles by treating `idNo` as the UUID.
-    // This will work only if you pass the actual auth UUID here.
-    const { data: profile, error: profileErr } = await supabase
-      .from("profiles")
+    const { data: authData, error: authErr } = await supabase
+      .from("auth")
       .select("email")
-      .eq("id", p.data.idNo)
+      .eq("user_id", p.data.idNo)
       .maybeSingle();
 
-
-
-    if (profileErr) {
+    if (authErr) {
       setLoading(false);
-      toast.error(profileErr.message);
+      toast.error(authErr.message);
       return;
     }
 
-    if (!profile?.email) {
+    if (!authData) {
       setLoading(false);
-      toast.error("Invalid ID no. Please check and try again.");
+      toast.error("Invalid user ID or password. Please check and try again.");
       return;
     }
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email: profile.email,
+    const { email: user_email } = authData;
+
+    const { data: signInData, error } = await supabase.auth.signInWithPassword({
+      email: user_email,
       password: p.data.password,
     });
 
     setLoading(false);
-    if (error) toast.error(error.message);
-    else {
-      toast.success("Welcome back!");
+    if (error) { toast.error(error.message); return; }
+
+    toast.success("Welcome back!");
+
+    // Redirect based on role
+    const userId = signInData.user?.id;
+    if (userId) {
+      const { data: roles } = await supabase
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", userId);
+      const isAdmin = (roles ?? []).some((r) => r.role === "admin");
+      navigate({ to: isAdmin ? "/admin" : "/dashboard" });
+    } else {
       navigate({ to: "/dashboard" });
     }
   }
@@ -142,4 +147,3 @@ function LoginForm() {
     </form>
   );
 }
-
