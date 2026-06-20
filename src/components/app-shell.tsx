@@ -29,7 +29,7 @@ export function AppShell({
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-4 px-4 sm:px-6">
           <Link to="/" className="flex items-center gap-2.5">
             <img src={logo} alt="" className="h-8 w-8 rounded-md" />
-            <span className="font-display text-sm font-extrabold tracking-tight">SR<span className="text-primary">GYM</span></span>
+            <span className="font-display text-sm font-extrabold tracking-tight">SR   <span className="text-primary"> GYM</span></span>
           </Link>
 
           <nav className="hidden items-center gap-1 md:flex">

@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { Instagram, Facebook, Youtube, MapPin, Phone, Mail } from "lucide-react";
+import { gym } from "@/integrations/gym";
 
 export function SiteFooter() {
   return (
@@ -41,14 +42,14 @@ export function SiteFooter() {
         <div>
           <h4 className="text-sm font-semibold text-foreground">Contact</h4>
           <ul className="mt-3 space-y-2 text-sm text-muted-foreground">
-            <li className="flex gap-2"><MapPin className="h-4 w-4 mt-0.5 text-primary shrink-0" /> Main Road, Sector 12, Your City</li>
+<li className="flex gap-2"><MapPin className="h-4 w-4 mt-0.5 text-primary shrink-0" /> {gym.locationText}</li>
             <li className="flex gap-2"><Phone className="h-4 w-4 mt-0.5 text-primary shrink-0" /> +91 98765 43210</li>
             <li className="flex gap-2"><Mail className="h-4 w-4 mt-0.5 text-primary shrink-0" /> hello@srgym.fit</li>
           </ul>
         </div>
       </div>
       <div className="border-t border-border/50 px-4 py-5 text-center text-xs text-muted-foreground">
-        © {new Date().getFullYear()} SRGYM AND FITNESS CENTRE. All rights reserved.
+        © {new Date().getFullYear()} SR GYM AND FITNESS CENTRE. All rights reserved.
       </div>
     </footer>
   );

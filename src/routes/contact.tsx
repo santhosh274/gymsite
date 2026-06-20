@@ -13,8 +13,8 @@ export const Route = createFileRoute("/contact")({
   head: () => ({
     meta: [
       { title: "Contact — SRGYM" },
-      { name: "description", content: "Get in touch with SRGYM AND FITNESS CENTRE. Visit, call, or send us a message." },
-      { property: "og:title", content: "Contact SRGYM" },
+      { name: "description", content: "Get in touch with SR GYM AND FITNESS CENTRE. Visit, call, or send us a message." },
+      { property: "og:title", content: "Contact SR GYM" },
       { property: "og:description", content: "Visit. Call. Lift." },
     ],
   }),
@@ -28,6 +28,11 @@ const schema = z.object({
   message: z.string().trim().min(1, "Message required").max(2000),
 });
 
+import { gym } from "@/integrations/gym";
+
+const gymLocation = gym.locationText;
+const gymMapSrc = gym.mapsEmbedSrc;
+
 function Contact() {
   const [form, setForm] = useState({ name: "", email: "", phone: "", message: "" });
   const [loading, setLoading] = useState(false);
@@ -39,13 +44,29 @@ function Contact() {
       toast.error(parsed.error.issues[0]?.message ?? "Invalid input");
       return;
     }
+
+    // WhatsApp integration: open WhatsApp with a pre-filled message.
+    // (We still keep Supabase code off for now to match the requirement.)
+    const whatsappNumber = "8122147725";
+    const phone = parsed.data.phone?.trim() || "";
+    const text = [
+      `Name: ${parsed.data.name}`,
+      `Email: ${parsed.data.email}`,
+      phone ? `Phone: ${phone}` : null,
+      "",
+      `Message: ${parsed.data.message}`,
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const url = `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(text)}`;
     setLoading(true);
-    const { error } = await supabase.from("contact_messages").insert(parsed.data);
-    setLoading(false);
-    if (error) toast.error(error.message);
-    else {
-      toast.success("Message sent! We'll be in touch.");
+    try {
+      window.open(url, "_blank", "noopener,noreferrer");
+      toast.success("Opening WhatsApp...");
       setForm({ name: "", email: "", phone: "", message: "" });
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -54,7 +75,9 @@ function Contact() {
       <section className="border-b border-border/50 bg-gradient-dark py-16">
         <div className="mx-auto max-w-4xl px-4 text-center sm:px-6">
           <p className="text-xs font-semibold uppercase tracking-widest text-primary">Get in touch</p>
-          <h1 className="mt-3 font-display text-5xl font-extrabold sm:text-6xl">Let's <span className="text-gradient-red">talk.</span></h1>
+          <h1 className="mt-3 font-display text-5xl font-extrabold sm:text-6xl">
+            Let's <span className="text-gradient-red">talk.</span>
+          </h1>
         </div>
       </section>
 
@@ -62,9 +85,9 @@ function Contact() {
         <div className="mx-auto grid max-w-6xl gap-10 px-4 sm:px-6 md:grid-cols-5">
           <div className="md:col-span-2 space-y-6">
             {[
-              { icon: MapPin, title: "Visit", body: "Main Road, Sector 12, Your City" },
-              { icon: Phone, title: "Call", body: "+91 98765 43210" },
-              { icon: Mail, title: "Email", body: "hello@srgym.fit" },
+              { icon: MapPin, title: "Visit", body: gymLocation },
+              { icon: Phone, title: "Call", body: "+91 80722 87744" },
+              { icon: Mail, title: "Email", body: "srgym@gmail.com" },
             ].map((c) => (
               <div key={c.title} className="flex gap-4 rounded-xl border border-border bg-surface p-5">
                 <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-gradient-red">
@@ -76,8 +99,9 @@ function Contact() {
                 </div>
               </div>
             ))}
+
             <div className="aspect-video overflow-hidden rounded-xl border border-border">
-              <iframe title="Map" src="https://www.google.com/maps?q=fitness+gym&output=embed" className="h-full w-full" loading="lazy" />
+              <iframe title="Map" src={gymMapSrc} className="h-full w-full" loading="lazy" />
             </div>
           </div>
 
@@ -85,21 +109,49 @@ function Contact() {
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
                 <Label htmlFor="name">Full name</Label>
-                <Input id="name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required maxLength={100} />
+                <Input
+                  id="name"
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  required
+                  maxLength={100}
+                />
               </div>
               <div>
                 <Label htmlFor="phone">Phone</Label>
-                <Input id="phone" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} maxLength={20} />
+                <Input
+                  id="phone"
+                  value={form.phone}
+                  onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                  maxLength={20}
+                />
               </div>
             </div>
+
             <div>
               <Label htmlFor="email">Email</Label>
-              <Input id="email" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required maxLength={200} />
+              <Input
+                id="email"
+                type="email"
+                value={form.email}
+                onChange={(e) => setForm({ ...form, email: e.target.value })}
+                required
+                maxLength={200}
+              />
             </div>
+
             <div>
               <Label htmlFor="message">Message</Label>
-              <Textarea id="message" rows={6} value={form.message} onChange={(e) => setForm({ ...form, message: e.target.value })} required maxLength={2000} />
+              <Textarea
+                id="message"
+                rows={6}
+                value={form.message}
+                onChange={(e) => setForm({ ...form, message: e.target.value })}
+                required
+                maxLength={2000}
+              />
             </div>
+
             <Button type="submit" disabled={loading} className="w-full bg-gradient-red text-primary-foreground shadow-red">
               <Send className="mr-2 h-4 w-4" />
               {loading ? "Sending..." : "Send message"}
@@ -110,3 +162,4 @@ function Contact() {
     </div>
   );
 }
+

@@ -5,11 +5,13 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { INR } from "@/lib/format";
 import hero from "@/assets/hero-gym.jpg";
+import { gym } from "@/integrations/gym";
 
 export const Route = createFileRoute("/")({
+
   head: () => ({
     meta: [
-      { title: "SRGYM AND FITNESS CENTRE — Transform Your Body. Transform Your Life." },
+      { title: "SR GYM AND FITNESS CENTRE — Transform Your Body. Transform Your Life." },
       { name: "description", content: "Premium strength training, expert coaching and a community that pushes you forward. Join SRGYM today." },
       { property: "og:title", content: "SRGYM AND FITNESS CENTRE" },
       { property: "og:description", content: "Transform your body. Transform your life." },
@@ -26,9 +28,9 @@ const reasons = [
 ];
 
 const testimonials = [
-  { name: "Aman Sharma", role: "Lost 18 kg in 6 months", quote: "The coaching at SRGYM is on another level. Felt accountable from day one." },
-  { name: "Priya Nair", role: "First powerlifting meet", quote: "I went from scared of the squat rack to competing. The vibe here is unreal." },
-  { name: "Rahul Iyer", role: "Body recomposition", quote: "Their diet & lift programming finally made everything click for me." },
+  { name: "Sriharish S", role: "Weight Gain", quote: "I joined SR Gym at 47 kg and struggled to gain muscle. With proper guidance and training, I reached 60 kg in just 12 months. The trainers kept me motivated throughout the journey!" },
+  { name: "Balaji G", role: "Weight Gain", quote: "SR Gym helped me build strength and confidence. I gained 5 kg of healthy weight while improving my overall fitness. The supportive environment made a huge difference." },
+  { name: "Priya", role: "Weight Loss", quote: "I wanted to lose weight and become healthier. After joining SR Gym, I lost 14 kg in 7 months through consistent workouts and expert guidance. I feel more energetic and confident than ever!" },
 ];
 
 function Home() {
@@ -82,9 +84,8 @@ function Home() {
 
             <dl className="mt-12 grid max-w-lg grid-cols-3 gap-6">
               {[
-                { k: "1,200+", v: "Members" },
-                { k: "15+", v: "Trainers" },
-                { k: "7 yrs", v: "Trusted" },
+                { k: "300+", v: "Members" },
+                { k: "5+ yrs", v: "Trusted" },
               ].map((s) => (
                 <div key={s.v}>
                   <dt className="font-display text-3xl font-extrabold text-foreground">{s.k}</dt>
@@ -229,7 +230,7 @@ function Home() {
               Walk in for a free tour. Our team will show you around and help pick the right plan.
             </p>
             <div className="mt-6 space-y-2 text-sm">
-              <p className="flex gap-2"><MapPin className="h-4 w-4 mt-0.5 text-primary" /> Main Road, Sector 12, Your City</p>
+<p className="flex gap-2"><MapPin className="h-4 w-4 mt-0.5 text-primary" /> {gym.locationText}</p>
               <p>Open: 5:00 AM – 11:00 PM • Mon–Sun</p>
             </div>
             <div className="mt-6 flex gap-3">
@@ -244,7 +245,7 @@ function Home() {
           <div className="aspect-video overflow-hidden rounded-2xl border border-border">
             <iframe
               title="Map"
-              src="https://www.google.com/maps?q=fitness+gym&output=embed"
+src={gym.mapsEmbedSrc}
               className="h-full w-full"
               loading="lazy"
             />
