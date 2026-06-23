@@ -44,18 +44,21 @@ export type Database = {
       attendance: {
         Row: {
           check_in: string
+          check_out: string | null
           date: string
           id: string
           user_id: string
         }
         Insert: {
           check_in?: string
+          check_out?: string | null
           date?: string
           id?: string
           user_id: string
         }
         Update: {
           check_in?: string
+          check_out?: string | null
           date?: string
           id?: string
           user_id?: string
@@ -134,6 +137,41 @@ export type Database = {
           description?: string | null
           id?: string
           title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "attendance_user_id_profiles_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      member_plans: {
+        Row: {
+          assigned_at: string
+          content: string
+          id: string
+          title: string
+          type: string
+          user_id: string
+        }
+        Insert: {
+          assigned_at?: string
+          content: string
+          id?: string
+          title: string
+          type: string
+          user_id: string
+        }
+        Update: {
+          assigned_at?: string
+          content?: string
+          id?: string
+          title?: string
+          type?: string
+          user_id?: string
         }
         Relationships: []
       }
@@ -477,6 +515,16 @@ export type Database = {
       }
       check_renewals: {
         Args: Record<string, never>
+        Returns: Record<string, unknown>
+      }
+      checkin_member: {
+        Args: Record<string, never>
+        Returns: Record<string, unknown>
+      }
+      checkout_member: {
+        Args: {
+          p_id: string
+        }
         Returns: Record<string, unknown>
       }
     }

@@ -109,10 +109,11 @@ function MemberDashboard() {
     queryFn: async () =>
       (
         await supabase
-          .from("workout_plans")
+          .from("member_plans")
           .select("*")
           .eq("user_id", user!.id)
-          .order("created_at", { ascending: false })
+          .eq("type", "workout")
+          .order("assigned_at", { ascending: false })
       ).data ?? [],
     enabled: !!user,
   });
@@ -122,10 +123,11 @@ function MemberDashboard() {
     queryFn: async () =>
       (
         await supabase
-          .from("diet_plans")
+          .from("member_plans")
           .select("*")
           .eq("user_id", user!.id)
-          .order("created_at", { ascending: false })
+          .eq("type", "diet")
+          .order("assigned_at", { ascending: false })
       ).data ?? [],
     enabled: !!user,
   });
@@ -144,16 +146,22 @@ function MemberDashboard() {
     enabled: !!user,
   });
 
-  /* ── Real-time notifications ── */
+  /* ── Real-time subscriptions ── */
   useEffect(() => {
     if (!user) return;
-    const ch = supabase
+    const ch1 = supabase
       .channel("notif-" + user.id)
       .on("postgres_changes", { event: "*", schema: "public", table: "notifications" }, () => {
         qc.invalidateQueries({ queryKey: ["notifications", user.id] });
       })
       .subscribe();
-    return () => { supabase.removeChannel(ch); };
+    const ch2 = supabase
+      .channel("payment-" + user.id)
+      .on("postgres_changes", { event: "*", schema: "public", table: "payments", filter: `user_id=eq.${user.id}` }, () => {
+        qc.invalidateQueries({ queryKey: ["payments", user.id] });
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(ch1); supabase.removeChannel(ch2); };
   }, [user, qc]);
 
   /* ── Derived values ── */
@@ -163,9 +171,10 @@ function MemberDashboard() {
   const daysLeft = membership ? daysBetween(membership.end_date) : null;
   const expired = daysLeft !== null && daysLeft < 0;
   const todayStr = new Date().toISOString().slice(0, 10);
-  const todayRecord = attendance.find((a: any) => a.date === todayStr);
-  const todayMarked = !!todayRecord;
-  const todayCheckedOut = !!todayRecord?.check_out;
+  const todayRecords = attendance.filter((a: any) => a.date === todayStr);
+  const todayCount = todayRecords.length;
+  const openRecord = todayRecords.find((a: any) => !a.check_out);
+  const canCheckIn = todayCount < 3;
   const sessions30 = attendance.filter((a: any) => daysBetween(a.date) > -30).length;
   const paymentStatus = payments.some((p) => p.status === "overdue")
     ? "overdue"
@@ -175,9 +184,7 @@ function MemberDashboard() {
 
   /* ── Check-in ── */
   async function checkIn() {
-    const { error } = await supabase
-      .from("attendance")
-      .insert({ user_id: user!.id, date: todayStr });
+    const { error } = await supabase.rpc("checkin_member");
     if (error) toast.error(error.message);
     else {
       toast.success("Checked in 💪 Let's go!");
@@ -187,13 +194,9 @@ function MemberDashboard() {
 
   /* ── Check-out ── */
   async function checkOut() {
-    if (!todayRecord) return;
-    const now = new Date();
-    const localISO = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString();
+    if (!openRecord) return;
     const { error } = await supabase
-      .from("attendance")
-      .update({ check_out: localISO } as any)
-      .eq("id", todayRecord.id);
+      .rpc("checkout_member", { p_id: openRecord.id });
     if (error) toast.error(error.message);
     else {
       toast.success("Checked out. Great session! 🏁");
@@ -277,14 +280,14 @@ function MemberDashboard() {
       <div className="mt-4 flex flex-wrap gap-2">
         <Button
           onClick={checkIn}
-          disabled={todayMarked}
+          disabled={!canCheckIn}
           className="bg-gradient-red text-primary-foreground shadow-red"
         >
           <PlayCircle className="mr-2 h-4 w-4" />
-          {todayMarked ? "Checked in today ✓" : "Check in now"}
+          {!canCheckIn ? "3/3 check-ins done ✓" : `Check in (${3 - todayCount} left)`}
         </Button>
 
-        {todayMarked && !todayCheckedOut && (
+        {openRecord && (
           <Button
             onClick={checkOut}
             variant="outline"
@@ -295,12 +298,10 @@ function MemberDashboard() {
           </Button>
         )}
 
-        {todayCheckedOut && (
+        {todayCount > 0 && !openRecord && (
           <div className="flex items-center gap-2 rounded-lg border border-green-300 bg-green-50 px-4 py-2 text-sm font-medium text-green-700">
             <CheckCircle2 className="h-4 w-4" />
-            Checked out{todayRecord?.check_out
-              ? ` at ${new Date(todayRecord.check_out).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
-              : ""}
+            {todayCount}/3 sessions completed today
           </div>
         )}
       </div>
@@ -343,6 +344,7 @@ function MemberDashboard() {
               {membership ? (
                 <>
                   <Row label="Plan" value={membership.membership_plans?.name ?? "—"} />
+              {membership.membership_plans && <Row label="Price" value={INR(membership.membership_plans.price)} />}
                   <Row label="Start" value={fmtDate(membership.start_date)} />
                   <Row label="Expires" value={fmtDate(membership.end_date)} />
                   <Row
@@ -441,7 +443,25 @@ function MemberDashboard() {
         </TabsContent>
 
         {/* ── PAYMENTS ── */}
-        <TabsContent value="payments" className="mt-4">
+        <TabsContent value="payments" className="mt-4 space-y-4">
+          {/* Quick pay via UPI */}
+          {payments.filter(p => p.status === "pending" || p.status === "overdue").length > 0 && (
+            <Card>
+              <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4">
+                <div>
+                  <p className="text-sm font-medium">Pay via UPI</p>
+                  <p className="text-lg font-bold text-primary">{INR(payments.find(p => p.status === "pending" || p.status === "overdue")!.amount)}</p>
+                </div>
+                <Button onClick={() => {
+                  const pending = payments.find(p => p.status === "pending" || p.status === "overdue")!;
+                  const vpa = "8015755889-3@ybl";
+                  window.location.href = `upi://pay?pa=${vpa}&pn=SRGYM&am=${pending.amount}&tn=Membership%20Payment&cu=INR`;
+                }}>
+                  Pay with UPI
+                </Button>
+              </CardContent>
+            </Card>
+          )}
           <Card>
             <CardHeader>
               <CardTitle className="text-base flex items-center gap-2">
@@ -478,6 +498,36 @@ function MemberDashboard() {
                             onClick={() => downloadReceipt(p, profile?.full_name)}
                           >
                             <Download className="mr-1 h-3 w-3" /> Receipt
+                          </Button>
+                        )}
+                        {(p.status === "pending" || p.status === "overdue") && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={async () => {
+                              const rec = "UPI-" + Math.random().toString(36).slice(2, 8).toUpperCase();
+                              const { data: membership } = await supabase
+                                .from("memberships")
+                                .select("id")
+                                .eq("user_id", user!.id)
+                                .order("end_date", { ascending: false })
+                                .limit(1)
+                                .maybeSingle();
+                              const { error } = await supabase
+                                .from("payments")
+                                .update({ status: "paid", paid_at: new Date().toISOString(), receipt_no: rec, membership_id: membership?.id ?? null })
+                                .eq("id", p.id);
+                              if (error) return toast.error(error.message);
+                              await supabase.from("notifications").insert({
+                                user_id: null,
+                                title: "UPI payment: " + (profile?.full_name ?? "Member"),
+                                message: `${profile?.full_name ?? "Member"} paid ${INR(p.amount)} via UPI. Receipt: ${rec}`,
+                                type: "info",
+                              });
+                              toast.success("Payment confirmed!");
+                              qc.invalidateQueries({ queryKey: ["payments", user?.id] });
+                            }}>
+                            Confirm UPI
                           </Button>
                         )}
                       </td>
@@ -668,7 +718,7 @@ function PlansList({
             </div>
             <div className="min-w-0 flex-1">
               <CardTitle className="text-base">{p.title}</CardTitle>
-              <p className="text-xs text-muted-foreground">{fmtDate(p.created_at)}</p>
+              <p className="text-xs text-muted-foreground">{fmtDate(p.assigned_at ?? p.created_at)}</p>
             </div>
           </CardHeader>
           <CardContent className="whitespace-pre-wrap text-sm text-muted-foreground">

@@ -25,10 +25,12 @@ BEGIN
       'memberships', (
         SELECT jsonb_agg(
           jsonb_build_object(
+            'id', m.id,
+            'start_date', m.start_date,
             'end_date', m.end_date,
             'status', m.status,
             'plan_id', m.plan_id,
-            'membership_plans', jsonb_build_object('name', mp.name)
+            'membership_plans', jsonb_build_object('name', mp.name, 'price', mp.price)
           )
           ORDER BY m.end_date DESC
         )

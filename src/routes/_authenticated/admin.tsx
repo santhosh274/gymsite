@@ -23,6 +23,7 @@ import {
   Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
 } from "@/components/ui/select";
 import { INR, fmtDate, daysBetween } from "@/lib/format";
+import * as XLSX from "xlsx";
 
 export const Route = createFileRoute("/_authenticated/admin")({
   head: () => ({ meta: [{ title: "Admin — SRGYM" }] }),
@@ -65,6 +66,13 @@ function localDateStr(d = new Date()) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+function fmtDuration(ms: number) {
+  const h = Math.floor(ms / 3600000);
+  const m = Math.floor((ms % 3600000) / 60000);
+  if (h === 0) return `${m}m`;
+  return `${h}h ${m}m`;
+}
+
 function AttendanceTab() {
   const today = localDateStr();
   const yesterday = localDateStr(new Date(Date.now() - 86400000));
@@ -87,9 +95,7 @@ function AttendanceTab() {
   });
 
   async function handleCheckOut(id: string, memberName: string) {
-    const now = new Date();
-    const localISO = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString();
-    const { error } = await supabase.from("attendance").update({ check_out: localISO } as any).eq("id", id);
+    const { error } = await supabase.rpc("checkout_member", { p_id: id });
     if (error) return toast.error(error.message);
     toast.success(`${memberName} checked out`);
     qc.invalidateQueries({ queryKey: ["a-attendance-date", selectedDate] });
@@ -139,13 +145,14 @@ function AttendanceTab() {
                 <th className="px-4 py-3 text-left">#</th>
                 <th className="px-4 py-3 text-left">Member</th>
                 <th className="px-4 py-3 text-left">Phone</th>
-                <th className="px-4 py-3 text-left">Check-in time</th>
-                <th className="px-4 py-3 text-left">Check-out time</th>
+                <th className="px-4 py-3 text-left">Check-in</th>
+                <th className="px-4 py-3 text-left">Check-out</th>
+                <th className="px-4 py-3 text-left">Duration</th>
                 <th className="px-4 py-3 text-left">Action</th>
               </tr>
             </thead>
             <tbody>
-              {isLoading && <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">Loading…</td></tr>}
+              {isLoading && <tr><td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">Loading…</td></tr>}
               {!isLoading && filtered.map((a: any, i: number) => (
                 <tr key={a.id} className="border-t border-border">
                   <td className="px-4 py-3 text-muted-foreground">{i + 1}</td>
@@ -154,14 +161,21 @@ function AttendanceTab() {
                   <td className="px-4 py-3">
                     {a.check_in ? (
                       <Badge variant="outline" className="text-green-600 border-green-300">
-                        {new Date(a.check_in).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        {new Date(a.check_in).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" })}
                       </Badge>
                     ) : "—"}
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">
                     {a.check_out
-                      ? new Date(a.check_out).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                      ? new Date(a.check_out).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" })
                       : <span className="text-xs italic">still in</span>}
+                  </td>
+                  <td className="px-4 py-3">
+                    {a.check_in && a.check_out
+                      ? fmtDuration(new Date(a.check_out).getTime() - new Date(a.check_in).getTime())
+                      : a.check_in
+                      ? fmtDuration(Date.now() - new Date(a.check_in).getTime())
+                      : "—"}
                   </td>
                   <td className="px-4 py-3">
                     {!a.check_out ? (
@@ -174,7 +188,7 @@ function AttendanceTab() {
                 </tr>
               ))}
               {!isLoading && filtered.length === 0 && (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">No check-ins for this date.</td></tr>
+                <tr><td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">No check-ins for this date.</td></tr>
               )}
             </tbody>
           </table>
@@ -190,6 +204,7 @@ function ActiveMembersTab() {
   const { data: members = [], isLoading } = useQuery({
     queryKey: ["a-active-members"],
     queryFn: async () => (await supabase.rpc("admin_get_members")).data ?? [],
+    staleTime: 60000,
   });
 
   const activeMembers = useMemo(() => {
@@ -283,46 +298,78 @@ function ActiveMembersTab() {
 function DuePaymentsTab() {
   const qc = useQueryClient();
   const [tab, setTab] = useState<"due" | "history">("due");
+  const [paidIds, setPaidIds] = useState<Set<string>>(new Set());
 
   const { data: members = [], isLoading } = useQuery({
     queryKey: ["a-due-payments"],
     queryFn: async () => (await supabase.rpc("admin_get_members")).data ?? [],
+    staleTime: 60000,
+  });
+
+  const { data: paidData = { byMembership: new Set<string>(), byUserDate: new Map<string, Set<string>>() } } = useQuery({
+    queryKey: ["a-paid-membership-ids"],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("payments")
+        .select("user_id, membership_id, due_date")
+        .in("status", ["paid", "pending"]);
+      const byMembership = new Set<string>();
+      const byUserDate = new Map<string, Set<string>>();
+      for (const p of data ?? []) {
+        if (p.membership_id) {
+          byMembership.add(p.membership_id);
+        } else {
+          if (!byUserDate.has(p.user_id)) byUserDate.set(p.user_id, new Set());
+          byUserDate.get(p.user_id)!.add(p.due_date);
+        }
+      }
+      return { byMembership, byUserDate };
+    },
+    staleTime: 30000,
   });
 
   const dueMembers = useMemo(() => {
     return (members as any[]).filter((m: any) => {
+      if (paidIds.has(m.id)) return false;
       const latest = m.memberships?.sort((a: any, b: any) => (a.end_date < b.end_date ? 1 : -1))[0];
       if (!latest) return false;
-      return daysBetween(latest.end_date) <= 7;
+      if (paidData.byMembership.has(latest.id)) return false;
+      const userDates = paidData.byUserDate.get(m.id);
+      if (userDates && userDates.has(latest.end_date)) return false;
+      return daysBetween(latest.end_date) <= 3;
     }).sort((a: any, b: any) => {
       const aL = a.memberships?.sort((x: any, y: any) => (x.end_date < y.end_date ? 1 : -1))[0];
       const bL = b.memberships?.sort((x: any, y: any) => (x.end_date < y.end_date ? 1 : -1))[0];
       return (aL?.end_date ?? "") < (bL?.end_date ?? "") ? -1 : 1;
     });
-  }, [members]);
+  }, [members, paidIds, paidData]);
 
   const { data: allPayments = [], isLoading: payLoading } = useQuery({
     queryKey: ["a-payment-history"],
     queryFn: async () =>
       (await supabase.from("payments").select("*, profiles(full_name, phone)").order("paid_at", { ascending: false }).limit(200)).data ?? [],
-    enabled: tab === "history",
+    staleTime: 60000,
   });
 
   async function markPaidOffline(member: any) {
     const latest = member.memberships?.sort((a: any, b: any) => (a.end_date < b.end_date ? 1 : -1))[0];
     if (!latest) return toast.error("No membership found");
-    const pendingPmt = (member.payments ?? []).find((p: any) => p.status === "pending" || p.status === "overdue");
-    if (pendingPmt) {
+    const { data: pending } = await supabase
+      .from("payments")
+      .select("id")
+      .eq("user_id", member.id)
+      .in("status", ["pending", "overdue"])
+      .limit(1);
+    const recNo = "OFF-" + Math.random().toString(36).slice(2, 8).toUpperCase();
+    if (pending && pending.length > 0) {
       const { error } = await supabase.from("payments").update({
-        status: "paid", paid_at: new Date().toISOString(),
-        receipt_no: "OFF-" + Math.random().toString(36).slice(2, 8).toUpperCase(),
-      }).eq("id", pendingPmt.id);
+        status: "paid", paid_at: new Date().toISOString(), receipt_no: recNo, membership_id: latest.id,
+      }).eq("id", pending[0].id);
       if (error) return toast.error(error.message);
     } else {
       const { error } = await supabase.from("payments").insert({
-        user_id: member.id, amount: latest.membership_plans?.price ?? 0, due_date: latest.end_date,
-        paid_at: new Date().toISOString(), status: "paid",
-        receipt_no: "OFF-" + Math.random().toString(36).slice(2, 8).toUpperCase(),
+        user_id: member.id, membership_id: latest.id, amount: latest.membership_plans?.price ?? 0, due_date: latest.end_date,
+        paid_at: new Date().toISOString(), status: "paid", receipt_no: recNo,
       });
       if (error) return toast.error(error.message);
     }
@@ -331,8 +378,10 @@ function DuePaymentsTab() {
       message: `Offline payment received for ${latest.membership_plans?.name ?? "membership"}. Thank you!`, type: "success",
     });
     toast.success(`Marked ${member.full_name} as paid (offline)`);
+    setPaidIds((prev) => new Set(prev).add(member.id));
     qc.invalidateQueries({ queryKey: ["a-due-payments"] });
     qc.invalidateQueries({ queryKey: ["a-payment-history"] });
+    qc.invalidateQueries({ queryKey: ["a-paid-membership-ids"] });
   }
 
   function urgencyBadge(endDate: string) {
@@ -452,16 +501,27 @@ function DuePaymentsTab() {
 function MembersTab() {
   const qc = useQueryClient();
   const [q, setQ] = useState("");
+  const [page, setPage] = useState(1);
   const [refreshKey, setRefreshKey] = useState(0);
+  const perPage = 10;
 
   const { data: members = [] } = useQuery({
     queryKey: ["mem-list", refreshKey],
     queryFn: async () => (await supabase.rpc("admin_get_members")).data ?? [],
+    staleTime: 60000,
   });
 
   const filtered = members.filter((m: any) =>
     !q || m.full_name?.toLowerCase().includes(q.toLowerCase()) || m.email?.toLowerCase().includes(q.toLowerCase()) || m.phone?.includes(q)
   );
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
+  const paginated = filtered.slice((page - 1) * perPage, page * perPage);
+
+  function onSearch(v: string) {
+    setQ(v);
+    setPage(1);
+  }
 
   function refresh() {
     setRefreshKey((k) => k + 1);
@@ -475,11 +535,11 @@ function MembersTab() {
         <div className="flex items-center gap-2 flex-wrap">
           <div className="flex w-full max-w-xs items-center gap-2">
             <Search className="h-4 w-4 text-muted-foreground" />
-            <Input placeholder="Search name / email / phone" value={q} onChange={(e) => setQ(e.target.value)} />
+            <Input placeholder="Search name / email / phone" value={q} onChange={(e) => onSearch(e.target.value)} />
           </div>
           <AddUserDialog onDone={refresh} />
-          <Button variant="outline" size="sm" onClick={() => exportMembersCSV(filtered)}>
-            <Download className="mr-1.5 h-4 w-4" /> Export CSV
+          <Button variant="outline" size="sm" onClick={() => exportMembersExcel(q ? filtered : members)}>
+            <Download className="mr-1.5 h-4 w-4" /> Export Excel
           </Button>
         </div>
       </CardHeader>
@@ -497,7 +557,7 @@ function MembersTab() {
             </tr>
           </thead>
           <tbody>
-            {filtered.map((m: any) => {
+            {paginated.map((m: any) => {
               const latest = m.memberships?.sort((a: any, b: any) => (a.end_date < b.end_date ? 1 : -1))[0];
               const expired = latest ? daysBetween(latest.end_date) < 0 : true;
               return (
@@ -524,7 +584,9 @@ function MembersTab() {
                       <AssignDialog member={m} onDone={refresh} />
                       <EditUserDialog member={m} onDone={refresh} />
                       <DeleteBtn onConfirm={async () => {
-                        const { error } = await supabase.from("profiles").delete().eq("id", m.id);
+                        const userId = m.email?.split('@')[0];
+                        if (!userId) { toast.error("Cannot determine user ID"); return; }
+                        const { error } = await supabase.rpc("admin_delete_user", { p_user_id: userId });
                         if (error) toast.error(error.message);
                         else { toast.success("Member removed"); refresh(); }
                       }} />
@@ -538,31 +600,63 @@ function MembersTab() {
             )}
           </tbody>
         </table>
+
+        {totalPages > 1 && (
+          <div className="flex items-center justify-center gap-1 border-t border-border px-4 py-3">
+            <Button variant="outline" size="sm" disabled={page === 1} onClick={() => setPage(page - 1)}>
+              Prev
+            </Button>
+            {Array.from({ length: Math.min(5, totalPages) }, (_, i) => i + 1).map((p) => (
+              <Button
+                key={p}
+                variant={p === page ? "default" : "outline"}
+                size="sm"
+                className="min-w-[2rem]"
+                onClick={() => setPage(p)}
+              >
+                {p}
+              </Button>
+            ))}
+            {totalPages > 6 && <span className="px-1 text-sm text-muted-foreground">…</span>}
+            {totalPages > 6 && (
+              <Button
+                variant={page === totalPages ? "default" : "outline"}
+                size="sm"
+                className="min-w-[2rem]"
+                onClick={() => setPage(totalPages)}
+              >
+                {totalPages}
+              </Button>
+            )}
+            <Button variant="outline" size="sm" disabled={page === totalPages} onClick={() => setPage(page + 1)}>
+              Next
+            </Button>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
 }
 
-function exportMembersCSV(members: any[]) {
+function exportMembersExcel(members: any[]) {
   if (!members.length) return toast.info("Nothing to export");
-  const headers = ["Name", "Email", "Phone", "Plan", "Expires", "Status", "Joined"];
-  const rows = members.map((m: any) => {
+  const data = members.map((m: any) => {
     const latest = m.memberships?.sort((a: any, b: any) => (a.end_date < b.end_date ? 1 : -1))[0];
     const expired = latest ? daysBetween(latest.end_date) < 0 : true;
-    return [
-      m.full_name ?? "", m.email ?? "", m.phone ?? "",
-      latest?.membership_plans?.name ?? "—",
-      latest ? fmtDate(latest.end_date) : "—",
-      expired ? "Expired" : latest ? "Active" : "No plan",
-      fmtDate(m.joined_at),
-    ];
+    return {
+      Name: m.full_name ?? "",
+      Email: m.email ?? "",
+      Phone: m.phone ?? "",
+      Plan: latest?.membership_plans?.name ?? "—",
+      Expires: latest ? fmtDate(latest.end_date) : "—",
+      Status: expired ? "Expired" : latest ? "Active" : "No plan",
+      Joined: fmtDate(m.joined_at),
+    };
   });
-  const csv = [headers.join(","), ...rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","))].join("\n");
-  const blob = new Blob([csv], { type: "text/csv" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url; a.download = `members-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
-  URL.revokeObjectURL(url);
+  const ws = XLSX.utils.json_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Members");
+  XLSX.writeFile(wb, `members-${new Date().toISOString().slice(0, 10)}.xlsx`);
 }
 
 /* ---- Add User Dialog ---- */
@@ -778,11 +872,11 @@ function AssignDialog({ member, onDone }: any) {
 
   async function assignMembership() {
     if (!plan) return toast.error("Pick a plan");
-    const { error } = await supabase.from("memberships").insert({
+    const { data: mem, error } = await supabase.from("memberships").insert({
       user_id: member.id, plan_id: plan.id, start_date: start, end_date: endDate, status: "active",
-    });
+    }).select("id").single();
     if (error) return toast.error(error.message);
-    await supabase.from("payments").insert({ user_id: member.id, amount: plan.price, due_date: start, status: "pending" });
+    await supabase.from("payments").insert({ user_id: member.id, membership_id: mem.id, amount: plan.price, due_date: start, status: "pending" });
     await supabase.from("notifications").insert({
       user_id: member.id, title: "Welcome aboard 🎉",
       message: `Your ${plan.name} membership is now active until ${endDate}.`, type: "success",
@@ -792,8 +886,9 @@ function AssignDialog({ member, onDone }: any) {
 
   async function logPayment() {
     if (!amount) return toast.error("Enter amount");
+    const { data: mem } = await supabase.from("memberships").select("id").eq("user_id", member.id).order("end_date", { ascending: false }).limit(1).single().maybeSingle();
     const { error } = await supabase.from("payments").insert({
-      user_id: member.id, amount: Number(amount), due_date: due,
+      user_id: member.id, membership_id: mem?.id ?? null, amount: Number(amount), due_date: due,
       paid_at: new Date().toISOString(), status: "paid",
       receipt_no: "RCP-" + Math.random().toString(36).slice(2, 8).toUpperCase(),
     });
@@ -1204,15 +1299,10 @@ function DeleteBtn({ onConfirm }: { onConfirm: () => void | Promise<void> }) {
   );
 }
 
-function exportCSV(filename: string, rows: any[]) {
+function exportExcel(filename: string, rows: any[]) {
   if (!rows.length) return toast.info("Nothing to export");
-  const headers = Object.keys(rows[0]).filter((k) => typeof rows[0][k] !== "object");
-  const csv = [headers.join(",")]
-    .concat(rows.map((r) => headers.map((h) => JSON.stringify(r[h] ?? "")).join(",")))
-    .join("\n");
-  const blob = new Blob([csv], { type: "text/csv" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url; a.download = `${filename}-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
-  URL.revokeObjectURL(url);
+  const ws = XLSX.utils.json_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+  XLSX.writeFile(wb, `${filename}-${new Date().toISOString().slice(0, 10)}.xlsx`);
 }
