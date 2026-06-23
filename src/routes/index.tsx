@@ -223,16 +223,7 @@ function Home() {
                 </li>
               ))}
             </ul>
-            <Button
-              asChild
-              className={`mt-7 w-full ${
-                p.featured
-                  ? "bg-gradient-red text-primary-foreground"
-                  : "bg-surface border border-border"
-              }`}
-            >
-              <Link to="/auth">Get started</Link>
-            </Button>
+              
           </div>
         );
       })}

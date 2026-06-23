@@ -98,7 +98,7 @@ function PlanCard({ p }: { p: typeof PLANS[number] }) {
         ))}
       </ul>
       <Button asChild className={btnClass}>
-        <Link to="/auth">Join {p.name}</Link>
+        <Link to="#">Join {p.name}</Link>
       </Button>
     </div>
   );
