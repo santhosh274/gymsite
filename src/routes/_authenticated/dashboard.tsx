@@ -178,6 +178,8 @@ function MemberDashboard() {
   const sessions30 = attendance.filter((a: any) => daysBetween(a.date) > -30).length;
   const paymentStatus = payments.some((p) => p.status === "overdue")
     ? "overdue"
+    : payments.some((p) => p.status === "awaiting_verification")
+    ? "verifying"
     : payments.some((p) => p.status === "pending")
     ? "pending"
     : "ok";
@@ -208,6 +210,48 @@ function MemberDashboard() {
   async function markRead(id: string) {
     await supabase.from("notifications").update({ is_read: true }).eq("id", id);
     qc.invalidateQueries({ queryKey: ["notifications", user?.id] });
+  }
+
+  /* ── UPI payment verification (secure flow) ──
+     Members can no longer set status="paid" themselves. They submit
+     the UTR/transaction reference from their UPI app, which calls a
+     SECURITY DEFINER RPC that can only move the row to
+     "awaiting_verification". Staff then confirm "paid" from the
+     admin panel after checking the bank/UPI statement. */
+  const [verifyDialogOpen, setVerifyDialogOpen] = useState(false);
+  const [verifyPayment, setVerifyPayment] = useState<any | null>(null);
+  const [utrInput, setUtrInput] = useState("");
+  const [submittingVerification, setSubmittingVerification] = useState(false);
+
+  function openVerifyDialog(payment: any) {
+    setVerifyPayment(payment);
+    setUtrInput("");
+    setVerifyDialogOpen(true);
+  }
+
+  async function submitVerification() {
+    if (!verifyPayment) return;
+    const trimmed = utrInput.trim();
+    if (trimmed.length < 6) {
+      toast.error("Enter the UTR / transaction reference number from your UPI app.");
+      return;
+    }
+    setSubmittingVerification(true);
+    // NOTE: cast to `any` because `request_payment_verification` was added via the
+    // SQL migration and isn't in src/integrations/supabase/types.ts yet. Remove this
+    // cast once you regenerate types with `supabase gen types typescript ...`.
+    const { error } = await (supabase.rpc as any)("request_payment_verification", {
+      p_payment_id: verifyPayment.id,
+      p_utr: trimmed,
+    });
+    setSubmittingVerification(false);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    toast.success("Submitted! Staff will verify and confirm your payment shortly.");
+    setVerifyDialogOpen(false);
+    qc.invalidateQueries({ queryKey: ["payments", user?.id] });
   }
 
   return (
@@ -253,12 +297,20 @@ function MemberDashboard() {
           value={
             paymentStatus === "overdue"
               ? "Overdue"
+              : paymentStatus === "verifying"
+              ? "Verifying"
               : paymentStatus === "pending"
               ? "Pending"
               : "Up to date"
           }
           sub={payments[0] ? `Last due: ${fmtDate(payments[0].due_date)}` : "No payments yet"}
-          tone={paymentStatus === "overdue" ? "danger" : paymentStatus === "pending" ? "warn" : "ok"}
+          tone={
+            paymentStatus === "overdue"
+              ? "danger"
+              : paymentStatus === "pending" || paymentStatus === "verifying"
+              ? "warn"
+              : "ok"
+          }
         />
         <StatCard
           icon={Activity}
@@ -451,6 +503,10 @@ function MemberDashboard() {
                 <div>
                   <p className="text-sm font-medium">Pay via UPI</p>
                   <p className="text-lg font-bold text-primary">{INR(payments.find(p => p.status === "pending" || p.status === "overdue")!.amount)}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    After paying, click "I've paid" on that row below and enter the UTR
+                    from your UPI app so staff can verify it.
+                  </p>
                 </div>
                 <Button onClick={() => {
                   const pending = payments.find(p => p.status === "pending" || p.status === "overdue")!;
@@ -504,31 +560,15 @@ function MemberDashboard() {
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={async () => {
-                              const rec = "UPI-" + Math.random().toString(36).slice(2, 8).toUpperCase();
-                              const { data: membership } = await supabase
-                                .from("memberships")
-                                .select("id")
-                                .eq("user_id", user!.id)
-                                .order("end_date", { ascending: false })
-                                .limit(1)
-                                .maybeSingle();
-                              const { error } = await supabase
-                                .from("payments")
-                                .update({ status: "paid", paid_at: new Date().toISOString(), receipt_no: rec, membership_id: membership?.id ?? null })
-                                .eq("id", p.id);
-                              if (error) return toast.error(error.message);
-                              await supabase.from("notifications").insert({
-                                user_id: null,
-                                title: "UPI payment: " + (profile?.full_name ?? "Member"),
-                                message: `${profile?.full_name ?? "Member"} paid ${INR(p.amount)} via UPI. Receipt: ${rec}`,
-                                type: "info",
-                              });
-                              toast.success("Payment confirmed!");
-                              qc.invalidateQueries({ queryKey: ["payments", user?.id] });
-                            }}>
-                            Confirm UPI
+                            onClick={() => openVerifyDialog(p)}
+                          >
+                            I've paid
                           </Button>
+                        )}
+                        {p.status === "awaiting_verification" && (
+                          <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                            <Clock className="h-3 w-3" /> Submitted — verifying
+                          </span>
                         )}
                       </td>
                     </tr>
@@ -544,6 +584,39 @@ function MemberDashboard() {
               </table>
             </CardContent>
           </Card>
+
+          {/* ── Verification dialog: member submits UTR, staff confirms later ── */}
+          <Dialog open={verifyDialogOpen} onOpenChange={setVerifyDialogOpen}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Confirm your UPI payment</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-3 text-sm">
+                <p className="text-muted-foreground">
+                  After paying {verifyPayment ? INR(verifyPayment.amount) : ""} via UPI, enter
+                  the UTR / transaction reference number shown in your UPI app's payment
+                  history. Staff will check this against the gym's bank statement and confirm
+                  your payment — it won't be marked paid automatically.
+                </p>
+                <div>
+                  <Label>UTR / Transaction reference</Label>
+                  <Input
+                    value={utrInput}
+                    onChange={(e) => setUtrInput(e.target.value)}
+                    placeholder="e.g. 123456789012"
+                  />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setVerifyDialogOpen(false)}>
+                  Cancel
+                </Button>
+                <Button onClick={submitVerification} disabled={submittingVerification}>
+                  {submittingVerification ? "Submitting…" : "Submit for verification"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </TabsContent>
 
         {/* ── ATTENDANCE ── */}
@@ -682,6 +755,12 @@ function PayStatus({ s }: { s: string }) {
     return (
       <Badge variant="destructive">
         <AlertCircle className="mr-1 h-3 w-3" /> Overdue
+      </Badge>
+    );
+  if (s === "awaiting_verification")
+    return (
+      <Badge variant="secondary" className="bg-blue-500/15 text-blue-600 hover:bg-blue-500/15">
+        <Clock className="mr-1 h-3 w-3" /> Verifying
       </Badge>
     );
   return (
@@ -846,36 +925,119 @@ function ProfileForm({
   );
 }
 
-/* ── Receipt download ── */
+/* ─────────────────────────────────────────────
+   RECEIPT DOWNLOAD — PDF via jsPDF (CDN)
+───────────────────────────────────────────── */
 function downloadReceipt(p: any, name?: string) {
-  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Receipt ${p.receipt_no ?? p.id}</title>
-<style>
-  body{font-family:system-ui;padding:40px;color:#111}
-  h1{color:#dc2626;margin-bottom:4px}
-  .sub{color:#666;margin-top:0;margin-bottom:24px}
-  table{width:100%;border-collapse:collapse;margin-top:16px}
-  td{padding:10px 8px;border-bottom:1px solid #eee}
-  td:first-child{color:#666;width:40%}
-  .footer{margin-top:40px;color:#999;font-size:13px}
-</style></head>
-<body>
-  <h1>SRGYM AND FITNESS CENTRE</h1>
-  <p class="sub">Official Payment Receipt</p>
-  <table>
-    <tr><td>Receipt No</td><td><strong>${p.receipt_no ?? p.id}</strong></td></tr>
-    <tr><td>Member</td><td>${name ?? "—"}</td></tr>
-    <tr><td>Amount</td><td><strong>₹ ${p.amount}</strong></td></tr>
-    <tr><td>Due date</td><td>${p.due_date}</td></tr>
-    <tr><td>Paid on</td><td>${p.paid_at ?? "—"}</td></tr>
-    <tr><td>Status</td><td>${p.status}</td></tr>
-  </table>
-  <p class="footer">Thank you for training with us. Keep pushing! 💪</p>
-</body></html>`;
-  const blob = new Blob([html], { type: "text/html" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `receipt-${p.receipt_no ?? p.id}.html`;
-  a.click();
-  URL.revokeObjectURL(url);
+  const loadJsPDF = (): Promise<any> =>
+    new Promise((resolve, reject) => {
+      if ((window as any).jspdf?.jsPDF) {
+        return resolve((window as any).jspdf.jsPDF);
+      }
+      const script = document.createElement("script");
+      script.src =
+        "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+      script.onload = () => {
+        const JsPDF = (window as any).jspdf?.jsPDF;
+        JsPDF ? resolve(JsPDF) : reject(new Error("jsPDF not found after load"));
+      };
+      script.onerror = () => reject(new Error("Failed to load jsPDF"));
+      document.head.appendChild(script);
+    });
+
+  loadJsPDF()
+    .then((JsPDF) => {
+      const doc = new JsPDF({ unit: "mm", format: "a4" });
+      const pw = doc.internal.pageSize.getWidth();   // 210 mm
+      const ph = doc.internal.pageSize.getHeight();  // 297 mm
+
+      /* ── Red header band ── */
+      doc.setFillColor(220, 38, 38);
+      doc.rect(0, 0, pw, 32, "F");
+
+      doc.setTextColor(255, 255, 255);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(20);
+      doc.text("SRGYM AND FITNESS CENTRE", pw / 2, 13, { align: "center" });
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(10);
+      doc.text("Official Payment Receipt", pw / 2, 22, { align: "center" });
+
+      /* ── Receipt number ── */
+      doc.setTextColor(220, 38, 38);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(12);
+      doc.text(`Receipt No: ${p.receipt_no ?? p.id}`, 14, 44);
+
+      /* ── Thin red rule ── */
+      doc.setDrawColor(220, 38, 38);
+      doc.setLineWidth(0.4);
+      doc.line(14, 47, pw - 14, 47);
+
+      /* ── Data rows ── */
+      const rows: [string, string][] = [
+        ["Member",    name ?? "—"],
+        ["Amount",    `Rs. ${p.amount}`],
+        ["Due Date",  p.due_date ?? "—"],
+        ["Paid On",   p.paid_at
+                        ? new Date(p.paid_at).toLocaleDateString("en-IN", {
+                            day: "2-digit", month: "short", year: "numeric",
+                          })
+                        : "—"],
+        ["Status",    (p.status ?? "—").toUpperCase()],
+      ];
+
+      let y = 58;
+      const rowH = 12;
+
+      rows.forEach(([label, value], i) => {
+        /* Alternating row background */
+        if (i % 2 === 0) {
+          doc.setFillColor(249, 250, 251);
+          doc.rect(14, y - 7, pw - 28, rowH, "F");
+        }
+
+        /* Label */
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(10);
+        doc.setTextColor(107, 114, 128);
+        doc.text(label, 18, y);
+
+        /* Value */
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(17, 24, 39);
+        doc.text(value, pw / 2 + 10, y);
+
+        y += rowH;
+      });
+
+      /* ── Light border around table area ── */
+      doc.setDrawColor(229, 231, 235);
+      doc.setLineWidth(0.3);
+      doc.rect(14, 51, pw - 28, rows.length * rowH, "S");
+
+      /* ── Footer ── */
+      doc.setDrawColor(229, 231, 235);
+      doc.setLineWidth(0.3);
+      doc.line(14, ph - 24, pw - 14, ph - 24);
+
+      doc.setFont("helvetica", "italic");
+      doc.setFontSize(9);
+      doc.setTextColor(156, 163, 175);
+      doc.text(
+        "Thank you for training with us. Keep pushing!",
+        pw / 2,
+        ph - 16,
+        { align: "center" }
+      );
+      doc.text("SRGYM AND FITNESS CENTRE", pw / 2, ph - 10, { align: "center" });
+
+      /* ── Save ── */
+      doc.save(`receipt-${p.receipt_no ?? p.id}.pdf`);
+    })
+    .catch((err) => {
+      console.error("PDF generation failed:", err);
+      toast.error("Could not generate PDF. Please try again.");
+    });
 }

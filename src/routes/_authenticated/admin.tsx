@@ -43,16 +43,15 @@ function Admin() {
   return (
     <AppShell title="Admin Control" subtitle="Manage your gym">
       <Tabs defaultValue="members">
-        {/* Horizontally scrollable tab bar — works on any screen width */}
         <div className="overflow-x-auto -mx-1 px-1">
           <TabsList className="inline-flex min-w-max gap-0.5 bg-muted rounded-lg p-1">
-            <TabsTrigger value="members" className="text-xs sm:text-sm px-3 py-1.5">Members</TabsTrigger>
-            <TabsTrigger value="active"  className="text-xs sm:text-sm px-3 py-1.5">Active</TabsTrigger>
+            <TabsTrigger value="members"    className="text-xs sm:text-sm px-3 py-1.5">Members</TabsTrigger>
+            <TabsTrigger value="active"     className="text-xs sm:text-sm px-3 py-1.5">Active</TabsTrigger>
             <TabsTrigger value="attendance" className="text-xs sm:text-sm px-3 py-1.5">Attendance</TabsTrigger>
-            <TabsTrigger value="due"    className="text-xs sm:text-sm px-3 py-1.5">Due</TabsTrigger>
-            <TabsTrigger value="plans"  className="text-xs sm:text-sm px-3 py-1.5">Plans</TabsTrigger>
-            <TabsTrigger value="notifs" className="text-xs sm:text-sm px-3 py-1.5">Broadcast</TabsTrigger>
-            <TabsTrigger value="holidays" className="text-xs sm:text-sm px-3 py-1.5">Holidays</TabsTrigger>
+            <TabsTrigger value="due"        className="text-xs sm:text-sm px-3 py-1.5">Due</TabsTrigger>
+            <TabsTrigger value="plans"      className="text-xs sm:text-sm px-3 py-1.5">Plans</TabsTrigger>
+            <TabsTrigger value="notifs"     className="text-xs sm:text-sm px-3 py-1.5">Broadcast</TabsTrigger>
+            <TabsTrigger value="holidays"   className="text-xs sm:text-sm px-3 py-1.5">Holidays</TabsTrigger>
           </TabsList>
         </div>
 
@@ -66,6 +65,57 @@ function Admin() {
       </Tabs>
     </AppShell>
   );
+}
+
+/* ─────────────────────────────────────────────
+   PAYMENT STATUS HELPER
+   Returns one of three states:
+     "paid"    → all payments for latest membership are paid
+     "unpaid"  → pending / overdue payment exists
+     "no-data" → no payment rows found at all (treat as unpaid)
+───────────────────────────────────────────── */
+type PaymentState =
+  | { status: "paid" }
+  | { status: "unpaid"; amount: number; due_date: string; label: string }
+  | { status: "no-data" };
+
+function resolvePaymentStatus(member: any): PaymentState {
+  const payments: any[] = member.payments ?? [];
+  const latest = member.memberships?.sort(
+    (a: any, b: any) => (a.end_date < b.end_date ? 1 : -1)
+  )[0];
+
+  if (!latest) return { status: "no-data" };
+
+  // payments linked to this specific membership
+  const relevant = payments.filter(
+    (p) => p.membership_id === latest.id || !p.membership_id
+  );
+
+  if (relevant.length === 0) {
+    // No payment rows at all → definitely unpaid
+    return {
+      status: "unpaid",
+      amount: latest.membership_plans?.price ?? 0,
+      due_date: latest.end_date,
+      label: "Never paid",
+    };
+  }
+
+  const unpaid = relevant.find(
+    (p) => p.status === "pending" || p.status === "overdue"
+  );
+  if (unpaid) {
+    return {
+      status: "unpaid",
+      amount: unpaid.amount,
+      due_date: unpaid.due_date,
+      label: unpaid.status === "overdue" ? "Overdue" : "Pending",
+    };
+  }
+
+  // All relevant payments are paid
+  return { status: "paid" };
 }
 
 /* ─────────────────────────────────────────────
@@ -120,7 +170,6 @@ function AttendanceTab() {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* Controls */}
         <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
           <div className="flex gap-2">
             {[{ label: "Today", value: today }, { label: "Yesterday", value: yesterday }].map((d) => (
@@ -147,7 +196,6 @@ function AttendanceTab() {
           </div>
         </div>
 
-        {/* Count summary */}
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
           <span>
@@ -159,7 +207,6 @@ function AttendanceTab() {
           </span>
         </div>
 
-        {/* Desktop table / Mobile cards */}
         <div className="hidden sm:block overflow-auto rounded-lg border border-border">
           <table className="w-full text-sm">
             <thead className="bg-muted text-xs uppercase text-muted-foreground">
@@ -185,7 +232,6 @@ function AttendanceTab() {
           </table>
         </div>
 
-        {/* Mobile card list */}
         <div className="sm:hidden space-y-2">
           {isLoading && <p className="text-center text-sm text-muted-foreground py-6">Loading…</p>}
           {!isLoading && filtered.length === 0 && (
@@ -280,18 +326,52 @@ function AttendanceRow({ a, i, onCheckOut }: { a: any; i: number; onCheckOut: (i
 ───────────────────────────────────────────── */
 function ActiveMembersTab() {
   const [q, setQ] = useState("");
-  const { data: members = [], isLoading } = useQuery({
+
+  const { data: members = [], isLoading: membersLoading } = useQuery({
     queryKey: ["a-active-members"],
     queryFn: async () => (await supabase.rpc("admin_get_members")).data ?? [],
     staleTime: 60000,
   });
 
+  // Fetch all payments directly — don't rely on RPC to include them
+  const { data: allPaymentsRaw = [], isLoading: paymentsLoading } = useQuery({
+    queryKey: ["a-all-payments-live"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("payments")
+        .select("id, user_id, membership_id, amount, due_date, status, paid_at, receipt_no");
+      if (error) throw error;
+      return data ?? [];
+    },
+    staleTime: 30000,
+  });
+
+  const isLoading = membersLoading || paymentsLoading;
+
+  // Build a map: user_id → payments[]
+  const paymentsByUser = useMemo(() => {
+    const map = new Map<string, any[]>();
+    for (const p of allPaymentsRaw as any[]) {
+      if (!map.has(p.user_id)) map.set(p.user_id, []);
+      map.get(p.user_id)!.push(p);
+    }
+    return map;
+  }, [allPaymentsRaw]);
+
+  // Merge live payments into members
+  const membersWithPayments = useMemo(() => {
+    return (members as any[]).map((m: any) => ({
+      ...m,
+      payments: paymentsByUser.get(m.id) ?? [],
+    }));
+  }, [members, paymentsByUser]);
+
   const activeMembers = useMemo(() => {
-    return (members as any[]).filter((m: any) => {
+    return membersWithPayments.filter((m: any) => {
       const latest = m.memberships?.sort((a: any, b: any) => (a.end_date < b.end_date ? 1 : -1))[0];
       return latest && daysBetween(latest.end_date) >= 0;
     });
-  }, [members]);
+  }, [membersWithPayments]);
 
   const filtered = activeMembers.filter((m: any) =>
     !q || m.full_name?.toLowerCase().includes(q.toLowerCase()) ||
@@ -309,6 +389,37 @@ function ActiveMembersTab() {
     if (days <= 7)  return <Badge variant="destructive">Expires in {days}d</Badge>;
     if (days <= 30) return <Badge variant="outline" className="border-yellow-400 text-yellow-600">Expires in {days}d</Badge>;
     return <Badge variant="default">{fmtDate(endDate)}</Badge>;
+  }
+
+  // ── NEW: renders the Payment column correctly ──
+  function PaymentCell({ member }: { member: any }) {
+    const state = resolvePaymentStatus(member);
+
+    if (state.status === "paid") {
+      return (
+        <Badge variant="outline" className="border-green-400 text-green-600 text-xs">
+          Paid
+        </Badge>
+      );
+    }
+
+    if (state.status === "unpaid") {
+      return (
+        <div>
+          <div className="font-medium text-destructive text-sm">{INR(state.amount)}</div>
+          <div className="text-xs text-muted-foreground">
+            {state.label} · Due {fmtDate(state.due_date)}
+          </div>
+        </div>
+      );
+    }
+
+    // "no-data" — membership exists but zero payment rows
+    return (
+      <Badge variant="outline" className="border-red-400 text-red-500 text-xs">
+        Unpaid
+      </Badge>
+    );
   }
 
   return (
@@ -347,7 +458,6 @@ function ActiveMembersTab() {
               {isLoading && <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">Loading…</td></tr>}
               {!isLoading && sorted.map((m: any) => {
                 const latest = m.memberships?.sort((a: any, b: any) => (a.end_date < b.end_date ? 1 : -1))[0];
-                const pendingPayment = (m.payments ?? []).find((p: any) => p.status === "pending" || p.status === "overdue");
                 return (
                   <tr key={m.id} className="border-t border-border">
                     <td className="px-4 py-3 font-medium">{m.full_name}</td>
@@ -358,16 +468,7 @@ function ActiveMembersTab() {
                     <td className="px-4 py-3">{latest?.membership_plans?.name ?? "—"}</td>
                     <td className="px-4 py-3 text-muted-foreground">{fmtDate(latest?.start_date)}</td>
                     <td className="px-4 py-3">{latest ? expiryBadge(latest.end_date) : "—"}</td>
-                    <td className="px-4 py-3">
-                      {pendingPayment ? (
-                        <div>
-                          <div className="font-medium text-destructive">{INR(pendingPayment.amount)}</div>
-                          <div className="text-xs text-muted-foreground">Due {fmtDate(pendingPayment.due_date)}</div>
-                        </div>
-                      ) : (
-                        <Badge variant="outline" className="border-green-400 text-green-600 text-xs">Paid</Badge>
-                      )}
-                    </td>
+                    <td className="px-4 py-3"><PaymentCell member={m} /></td>
                   </tr>
                 );
               })}
@@ -386,7 +487,6 @@ function ActiveMembersTab() {
           )}
           {!isLoading && sorted.map((m: any) => {
             const latest = m.memberships?.sort((a: any, b: any) => (a.end_date < b.end_date ? 1 : -1))[0];
-            const pendingPayment = (m.payments ?? []).find((p: any) => p.status === "pending" || p.status === "overdue");
             return (
               <div key={m.id} className="p-4 space-y-2">
                 <div className="flex items-start justify-between gap-2">
@@ -395,16 +495,9 @@ function ActiveMembersTab() {
                     <p className="text-xs text-muted-foreground">{m.email}</p>
                     <p className="text-xs text-muted-foreground">{m.phone}</p>
                   </div>
-                  {pendingPayment ? (
-                    <div className="text-right">
-                      <p className="text-sm font-semibold text-destructive">{INR(pendingPayment.amount)}</p>
-                      <p className="text-xs text-muted-foreground">Due {fmtDate(pendingPayment.due_date)}</p>
-                    </div>
-                  ) : (
-                    <Badge variant="outline" className="border-green-400 text-green-600 text-xs shrink-0">Paid</Badge>
-                  )}
+                  <PaymentCell member={m} />
                 </div>
-                <div className="flex flex-wrap gap-2 text-xs">
+                <div className="flex flex-wrap gap-2 text-xs items-center">
                   <span className="text-muted-foreground">Plan: <span className="text-foreground font-medium">{latest?.membership_plans?.name ?? "—"}</span></span>
                   <span className="text-muted-foreground">From: <span className="text-foreground">{fmtDate(latest?.start_date)}</span></span>
                 </div>
@@ -424,48 +517,76 @@ function ActiveMembersTab() {
 function DuePaymentsTab() {
   const qc = useQueryClient();
   const [tab, setTab] = useState<"due" | "history">("due");
-  const [paidIds, setPaidIds] = useState<Set<string>>(new Set());
+  const [justPaidIds, setJustPaidIds] = useState<Set<string>>(new Set());
 
-  const { data: members = [], isLoading } = useQuery({
+  const { data: members = [], isLoading: membersLoading } = useQuery({
     queryKey: ["a-due-payments"],
     queryFn: async () => (await supabase.rpc("admin_get_members")).data ?? [],
     staleTime: 60000,
   });
 
-  const { data: paidData = { byMembership: new Set<string>(), byUserDate: new Map<string, Set<string>>() } } = useQuery({
-    queryKey: ["a-paid-membership-ids"],
+  // Fetch all payments directly — same approach as ActiveMembersTab
+  const { data: allPaymentsRaw = [], isLoading: paymentsLoading } = useQuery({
+    queryKey: ["a-all-payments-live"],
     queryFn: async () => {
-      const { data } = await supabase.from("payments").select("user_id, membership_id, due_date").in("status", ["paid", "pending"]);
-      const byMembership = new Set<string>();
-      const byUserDate   = new Map<string, Set<string>>();
-      for (const p of data ?? []) {
-        if (p.membership_id) {
-          byMembership.add(p.membership_id);
-        } else {
-          if (!byUserDate.has(p.user_id)) byUserDate.set(p.user_id, new Set());
-          byUserDate.get(p.user_id)!.add(p.due_date);
-        }
-      }
-      return { byMembership, byUserDate };
+      const { data, error } = await supabase
+        .from("payments")
+        .select("id, user_id, membership_id, amount, due_date, status, paid_at, receipt_no");
+      if (error) throw error;
+      return data ?? [];
     },
     staleTime: 30000,
   });
 
+  const isLoading = membersLoading || paymentsLoading;
+
+  // Build user_id → payments[] map
+  const paymentsByUser = useMemo(() => {
+    const map = new Map<string, any[]>();
+    for (const p of allPaymentsRaw as any[]) {
+      if (!map.has(p.user_id)) map.set(p.user_id, []);
+      map.get(p.user_id)!.push(p);
+    }
+    return map;
+  }, [allPaymentsRaw]);
+
+  // Merge live payments into members
+  const membersWithPayments = useMemo(() => {
+    return (members as any[]).map((m: any) => ({
+      ...m,
+      payments: paymentsByUser.get(m.id) ?? [],
+    }));
+  }, [members, paymentsByUser]);
   const dueMembers = useMemo(() => {
-    return (members as any[]).filter((m: any) => {
-      if (paidIds.has(m.id)) return false;
-      const latest = m.memberships?.sort((a: any, b: any) => (a.end_date < b.end_date ? 1 : -1))[0];
+  return membersWithPayments
+    .filter((m: any) => {
+      if (justPaidIds.has(m.id)) return false;
+
+      const latest = m.memberships?.sort(
+        (a: any, b: any) => (a.end_date < b.end_date ? 1 : -1)
+      )[0];
+
       if (!latest) return false;
-      if (paidData.byMembership.has(latest.id)) return false;
-      const userDates = paidData.byUserDate.get(m.id);
-      if (userDates && userDates.has(latest.end_date)) return false;
-      return daysBetween(latest.end_date) <= 3;
-    }).sort((a: any, b: any) => {
-      const aE = a.memberships?.sort((x: any, y: any) => (x.end_date < y.end_date ? 1 : -1))[0]?.end_date ?? "";
-      const bE = b.memberships?.sort((x: any, y: any) => (x.end_date < y.end_date ? 1 : -1))[0]?.end_date ?? "";
-      return aE < bE ? -1 : 1;
+
+      const daysLeft = daysBetween(latest.end_date);
+
+      // Only show if expiry is within 7 days
+      return daysLeft <= 7;
+    })
+    .sort((a: any, b: any) => {
+      const aEnd =
+        a.memberships?.sort(
+          (x: any, y: any) => (x.end_date < y.end_date ? 1 : -1)
+        )[0]?.end_date ?? "";
+
+      const bEnd =
+        b.memberships?.sort(
+          (x: any, y: any) => (x.end_date < y.end_date ? 1 : -1)
+        )[0]?.end_date ?? "";
+
+      return aEnd < bEnd ? -1 : 1;
     });
-  }, [members, paidIds, paidData]);
+}, [membersWithPayments, justPaidIds]);
 
   const { data: allPayments = [], isLoading: payLoading } = useQuery({
     queryKey: ["a-payment-history"],
@@ -496,15 +617,17 @@ function DuePaymentsTab() {
       message: `Offline payment received for ${latest.membership_plans?.name ?? "membership"}. Thank you!`, type: "success",
     });
     toast.success(`Marked ${member.full_name} as paid (offline)`);
-    setPaidIds((prev) => new Set(prev).add(member.id));
+    setJustPaidIds((prev) => new Set(prev).add(member.id));
     qc.invalidateQueries({ queryKey: ["a-due-payments"] });
     qc.invalidateQueries({ queryKey: ["a-payment-history"] });
     qc.invalidateQueries({ queryKey: ["a-paid-membership-ids"] });
+    qc.invalidateQueries({ queryKey: ["a-active-members"] });
+    qc.invalidateQueries({ queryKey: ["a-all-payments-live"] });
   }
 
   function urgencyBadge(endDate: string) {
     const days = daysBetween(endDate);
-    if (days < 0)  return <Badge variant="destructive">Expired {Math.abs(days)}d ago</Badge>;
+    if (days < 0)   return <Badge variant="destructive">Expired {Math.abs(days)}d ago</Badge>;
     if (days === 0) return <Badge variant="destructive">Expires today</Badge>;
     return <Badge variant="outline" className="border-orange-400 text-orange-600">Expires in {days}d</Badge>;
   }
@@ -529,7 +652,6 @@ function DuePaymentsTab() {
           </TabsList>
 
           <TabsContent value="due" className="mt-4">
-            {/* Desktop */}
             <div className="hidden sm:block overflow-auto rounded-lg border border-border">
               <table className="w-full text-sm">
                 <thead className="bg-muted text-xs uppercase text-muted-foreground">
@@ -567,17 +689,16 @@ function DuePaymentsTab() {
                     );
                   })}
                   {!isLoading && dueMembers.length === 0 && (
-                    <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">🎉 No due payments within 3 days.</td></tr>
+                    <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">🎉 No due payments within 7 days.</td></tr>
                   )}
                 </tbody>
               </table>
             </div>
 
-            {/* Mobile cards */}
             <div className="sm:hidden space-y-2">
               {isLoading && <p className="text-center text-sm text-muted-foreground py-6">Loading…</p>}
               {!isLoading && dueMembers.length === 0 && (
-                <p className="text-center text-sm text-muted-foreground py-6">🎉 No due payments within 3 days.</p>
+                <p className="text-center text-sm text-muted-foreground py-6">🎉 No due payments within 7 days.</p>
               )}
               {!isLoading && dueMembers.map((m: any) => {
                 const latest = m.memberships?.sort((a: any, b: any) => (a.end_date < b.end_date ? 1 : -1))[0];
@@ -608,7 +729,6 @@ function DuePaymentsTab() {
           </TabsContent>
 
           <TabsContent value="history" className="mt-4">
-            {/* Desktop */}
             <div className="hidden sm:block overflow-auto rounded-lg border border-border">
               <table className="w-full text-sm">
                 <thead className="bg-muted text-xs uppercase text-muted-foreground">
@@ -643,7 +763,6 @@ function DuePaymentsTab() {
               </table>
             </div>
 
-            {/* Mobile cards */}
             <div className="sm:hidden space-y-2">
               {payLoading && <p className="text-center text-sm text-muted-foreground py-6">Loading…</p>}
               {!payLoading && allPayments.length === 0 && (
@@ -728,7 +847,6 @@ function MembersTab() {
       </CardHeader>
 
       <CardContent className="p-0">
-        {/* Desktop table */}
         <div className="hidden sm:block overflow-auto">
           <table className="w-full text-sm">
             <thead className="bg-muted text-xs uppercase text-muted-foreground">
@@ -785,7 +903,6 @@ function MembersTab() {
           </table>
         </div>
 
-        {/* Mobile cards */}
         <div className="sm:hidden divide-y divide-border">
           {paginated.length === 0 && (
             <p className="text-center text-sm text-muted-foreground py-8 px-4">No members.</p>
@@ -826,7 +943,6 @@ function MembersTab() {
           })}
         </div>
 
-        {/* Pagination */}
         {totalPages > 1 && (
           <div className="flex items-center justify-center gap-1 border-t border-border px-4 py-3 flex-wrap">
             <Button variant="outline" size="sm" disabled={page === 1} onClick={() => setPage(page - 1)}>
@@ -870,13 +986,13 @@ function exportMembersExcel(members: any[]) {
 
 /* ─── Add User Dialog ─── */
 function AddUserDialog({ onDone }: { onDone: () => void }) {
-  const [open, setOpen]       = useState(false);
-  const [idNo, setIdNo]       = useState("");
+  const [open, setOpen]         = useState(false);
+  const [idNo, setIdNo]         = useState("");
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
-  const [phone, setPhone]     = useState("");
-  const [showPw, setShowPw]   = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [phone, setPhone]       = useState("");
+  const [showPw, setShowPw]     = useState(false);
+  const [loading, setLoading]   = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -1055,40 +1171,80 @@ function AssignDialog({ member, onDone }: any) {
     enabled: open && (tab === "workout" || tab === "diet"),
   });
 
-  const [wpTitle, setWpTitle]   = useState("");
+  const [wpTitle, setWpTitle]     = useState("");
   const [wpContent, setWpContent] = useState("");
-  const [dpTitle, setDpTitle]   = useState("");
+  const [dpTitle, setDpTitle]     = useState("");
   const [dpContent, setDpContent] = useState("");
-  const [saving, setSaving]     = useState(false);
+  const [saving, setSaving]       = useState(false);
 
   async function assignMembership() {
     if (!plan) return toast.error("Pick a plan");
+    // Insert membership
     const { data: mem, error } = await supabase.from("memberships").insert({
       user_id: member.id, plan_id: plan.id, start_date: start, end_date: endDate, status: "active",
     }).select("id").single();
     if (error) return toast.error(error.message);
-    await supabase.from("payments").insert({ user_id: member.id, membership_id: mem.id, amount: plan.price, due_date: start, status: "pending" });
+
+    // Insert payment as PENDING — must be explicitly marked paid later
+    const { error: payErr } = await supabase.from("payments").insert({
+      user_id: member.id,
+      membership_id: mem.id,
+      amount: plan.price,
+      due_date: start,
+      status: "pending",   // ← always pending until paid offline or via UPI
+      paid_at: null,
+      receipt_no: null,
+    });
+    if (payErr) return toast.error(payErr.message);
+
     await supabase.from("notifications").insert({
       user_id: member.id, title: "Welcome aboard 🎉",
-      message: `Your ${plan.name} membership is now active until ${endDate}.`, type: "success",
+      message: `Your ${plan.name} membership is now active until ${endDate}. Please complete your payment.`,
+      type: "info",
     });
-    toast.success("Membership assigned"); setOpen(false); onDone();
+    toast.success("Membership assigned — payment marked as pending");
+    setOpen(false);
+    onDone();
+    qc.invalidateQueries({ queryKey: ["a-active-members"] });
+    qc.invalidateQueries({ queryKey: ["a-due-payments"] });
+    qc.invalidateQueries({ queryKey: ["a-paid-membership-ids"] });
+    qc.invalidateQueries({ queryKey: ["a-all-payments-live"] });
   }
 
   async function logPayment() {
     if (!amount) return toast.error("Enter amount");
     const { data: mem } = await supabase.from("memberships").select("id").eq("user_id", member.id).order("end_date", { ascending: false }).limit(1).maybeSingle();
-    const { error } = await supabase.from("payments").insert({
-      user_id: member.id, membership_id: mem?.id ?? null, amount: Number(amount), due_date: due,
-      paid_at: new Date().toISOString(), status: "paid",
-      receipt_no: "RCP-" + Math.random().toString(36).slice(2, 8).toUpperCase(),
-    });
-    if (error) return toast.error(error.message);
+
+    // Check if there's an existing pending payment to update instead of inserting a duplicate
+    const { data: pending } = await supabase.from("payments").select("id").eq("user_id", member.id).in("status", ["pending", "overdue"]).limit(1);
+    const recNo = "RCP-" + Math.random().toString(36).slice(2, 8).toUpperCase();
+
+    if (pending && pending.length > 0) {
+      const { error } = await supabase.from("payments").update({
+        amount: Number(amount), due_date: due,
+        paid_at: new Date().toISOString(), status: "paid", receipt_no: recNo,
+        membership_id: mem?.id ?? null,
+      }).eq("id", pending[0].id);
+      if (error) return toast.error(error.message);
+    } else {
+      const { error } = await supabase.from("payments").insert({
+        user_id: member.id, membership_id: mem?.id ?? null, amount: Number(amount), due_date: due,
+        paid_at: new Date().toISOString(), status: "paid", receipt_no: recNo,
+      });
+      if (error) return toast.error(error.message);
+    }
+
     await supabase.from("notifications").insert({
-      user_id: member.id, title: "Payment received",
+      user_id: member.id, title: "Payment received ✅",
       message: `We received ${INR(amount)}. Thank you!`, type: "success",
     });
-    toast.success("Payment recorded"); setOpen(false); onDone();
+    toast.success("Payment recorded as paid");
+    setOpen(false);
+    onDone();
+    qc.invalidateQueries({ queryKey: ["a-active-members"] });
+    qc.invalidateQueries({ queryKey: ["a-due-payments"] });
+    qc.invalidateQueries({ queryKey: ["a-paid-membership-ids"] });
+    qc.invalidateQueries({ queryKey: ["a-all-payments-live"] });
   }
 
   async function savePlan(type: "workout" | "diet") {
@@ -1161,13 +1317,19 @@ function AssignDialog({ member, onDone }: any) {
             </div>
             <div><Label>Start date</Label><Input type="date" value={start} onChange={(e) => setStart(e.target.value)} /></div>
             {endDate && <p className="text-sm text-muted-foreground">Ends: <span className="font-medium text-foreground">{fmtDate(endDate)}</span></p>}
-            <Button onClick={assignMembership} className="w-full bg-gradient-red text-primary-foreground">Assign & invoice</Button>
+            <p className="text-xs text-muted-foreground bg-yellow-50 border border-yellow-200 rounded p-2">
+              ⚠️ Payment will be marked as <strong>Pending</strong> until collected offline or via UPI.
+            </p>
+            <Button onClick={assignMembership} className="w-full bg-gradient-red text-primary-foreground">Assign Membership</Button>
           </TabsContent>
 
           <TabsContent value="payment" className="mt-4 space-y-3">
+            <p className="text-sm text-muted-foreground">Record a payment as <strong>paid</strong>. Use this after collecting cash or confirming UPI.</p>
             <div><Label>Amount (₹)</Label><Input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} /></div>
-            <div><Label>Due date</Label><Input type="date" value={due} onChange={(e) => setDue(e.target.value)} /></div>
-            <Button onClick={logPayment} className="w-full bg-gradient-red text-primary-foreground">Record paid</Button>
+            <div><Label>Payment date</Label><Input type="date" value={due} onChange={(e) => setDue(e.target.value)} /></div>
+            <Button onClick={logPayment} className="w-full bg-gradient-red text-primary-foreground">
+              <CheckCircle2 className="mr-1.5 h-4 w-4" /> Record as Paid
+            </Button>
           </TabsContent>
 
           <TabsContent value="workout" className="mt-4 space-y-4">
