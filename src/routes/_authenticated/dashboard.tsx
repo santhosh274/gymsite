@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import {
   Calendar, CreditCard, ClipboardList, Apple, Activity,
   PlayCircle, LogOut, BellRing, CheckCircle2, Clock, AlertCircle,
-  Download, User, ChevronRight, Dumbbell, Utensils,
+  Download, User, ChevronRight, Dumbbell, Utensils, MessageCircle, Copy,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
@@ -17,9 +17,6 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger,
-} from "@/components/ui/dialog";
 import { INR, fmtDate, daysBetween } from "@/lib/format";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
@@ -177,6 +174,8 @@ function MemberDashboard() {
   const canCheckIn = todayCount < 3;
   const sessions30 = attendance.filter((a: any) => daysBetween(a.date) > -30).length;
   const paymentStatus = membership?.paid ? "ok" : "unpaid";
+  const pendingPay = payments.find(p => p.status === "pending" || p.status === "overdue");
+  const upiUri = pendingPay ? `upi://pay?pa=8072287744@okbizaxis&pn=SRGYM&am=${Number(pendingPay.amount).toFixed(2)}&tn=Membership Payment&cu=INR` : "";
 
   /* ── Check-in ── */
   async function checkIn() {
@@ -210,49 +209,14 @@ function MemberDashboard() {
      Members can no longer set status="paid" themselves. They submit
      the UTR/transaction reference from their UPI app, which calls a
      SECURITY DEFINER RPC that can only move the row to
-     "awaiting_verification". Staff then confirm "paid" from the
-     admin panel after checking the bank/UPI statement. */
-  const [verifyDialogOpen, setVerifyDialogOpen] = useState(false);
-  const [verifyPayment, setVerifyPayment] = useState<any | null>(null);
-  const [utrInput, setUtrInput] = useState("");
-  const [submittingVerification, setSubmittingVerification] = useState(false);
+      "awaiting_verification". Staff then confirm "paid" from the
+       admin panel after checking the bank/UPI statement. */
 
-  function openVerifyDialog(payment: any) {
-    setVerifyPayment(payment);
-    setUtrInput("");
-    setVerifyDialogOpen(true);
-  }
-
-  async function submitVerification() {
-    if (!verifyPayment) return;
-    const trimmed = utrInput.trim();
-    if (trimmed.length < 6) {
-      toast.error("Enter the UTR / transaction reference number from your UPI app.");
-      return;
-    }
-    setSubmittingVerification(true);
-    // NOTE: cast to `any` because `request_payment_verification` was added via the
-    // SQL migration and isn't in src/integrations/supabase/types.ts yet. Remove this
-    // cast once you regenerate types with `supabase gen types typescript ...`.
-    const { error } = await (supabase.rpc as any)("request_payment_verification", {
-      p_payment_id: verifyPayment.id,
-      p_utr: trimmed,
-    });
-    setSubmittingVerification(false);
-    if (error) {
-      toast.error(error.message);
-      return;
-    }
-    toast.success("Submitted! Staff will verify and confirm your payment shortly.");
-    setVerifyDialogOpen(false);
-    qc.invalidateQueries({ queryKey: ["payments", user?.id] });
-  }
 
   return (
     <AppShell
       title={`Hey, ${displayName} 👋`}
       subtitle="Your training hub — stay consistent, stay strong."
-      notifCount={unread}
     >
       {/* ── Membership expiry banner ── */}
       {membership && daysLeft !== null && daysLeft <= 7 && (
@@ -315,6 +279,24 @@ function MemberDashboard() {
           tone={unread > 0 ? "warn" : "ok"}
         />
       </div>
+
+      {/* ── WhatsApp Group ── */}
+      <Card className="mt-4">
+        <CardContent className="flex items-center justify-between gap-3 py-3">
+          <div className="flex items-center gap-3">
+            <MessageCircle className="h-5 w-5 text-green-500 shrink-0" />
+            <div>
+              <p className="text-sm font-medium">Join our WhatsApp group</p>
+              <p className="text-xs text-muted-foreground">Get updates, schedules & announcements</p>
+            </div>
+          </div>
+          <a href="https://chat.whatsapp.com/GmDeCMhk1bf14pFqWz36Rv?mode=gi_t" target="_blank" rel="noopener noreferrer">
+            <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white">
+              <MessageCircle className="mr-1.5 h-4 w-4" /> Join
+            </Button>
+          </a>
+        </CardContent>
+      </Card>
 
       {/* ── Quick actions ── */}
       <div className="mt-4 flex flex-wrap gap-2">
@@ -484,27 +466,42 @@ function MemberDashboard() {
 
         {/* ── PAYMENTS ── */}
         <TabsContent value="payments" className="mt-4 space-y-4">
-          {/* Quick pay via UPI */}
-          {!membership?.paid && payments.filter(p => p.status === "pending" || p.status === "overdue").length > 0 && (
+          {!membership?.paid && pendingPay && (
             <Card>
-              <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4">
+              <CardContent className="space-y-4 py-4">
                 <div>
                   <p className="text-sm font-medium">Pay via UPI</p>
-                  <p className="text-lg font-bold text-primary">{INR(payments.find(p => p.status === "pending" || p.status === "overdue")!.amount)}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    After paying, click "I've paid" on that row below and enter the UTR
-                    from your UPI app so staff can verify it.
-                  </p>
+                  <p className="text-lg font-bold text-primary">{INR(pendingPay.amount)}</p>
                 </div>
-                <Button onClick={() => {
-                  const pending = payments.find(p => p.status === "pending" || p.status === "overdue")!;
-                  const vpa = "8015755889@ybl";
-                  const amt = Number(pending.amount).toFixed(2);
-                  const txnRef = "TXN" + Date.now() + Math.random().toString(36).slice(2, 8).toUpperCase();
-                  window.location.href = `upi://pay?pa=${vpa}&pn=SRGYM&am=${amt}&tr=${txnRef}&tn=Membership%20Payment&cu=INR`;
-                }}>
-                  Pay with UPI
-                </Button>
+                <div className="flex flex-col items-center gap-3">
+                  <img
+                    src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(upiUri)}`}
+                    alt="UPI QR Code"
+                    className="rounded-lg border border-border cursor-pointer"
+                    style={{ width: 200, height: 200 }}
+                    onClick={async (e) => {
+                      const img = e.currentTarget as HTMLImageElement;
+                      const url = img.src.replace("200x200", "500x500");
+                      const res = await fetch(url);
+                      const blob = await res.blob();
+                      const a = document.createElement("a");
+                      a.href = URL.createObjectURL(blob);
+                      a.download = "srgym-qr.png";
+                      a.click();
+                      URL.revokeObjectURL(a.href);
+                    }}
+                  />
+                  <p className="text-xs text-muted-foreground">Scan with any UPI app to pay</p>
+                </div>
+                <div className="flex items-center justify-between gap-2 rounded-lg border border-border px-3 py-2">
+                  <code className="text-sm select-all">8072287744</code>
+                  <Button size="sm" variant="ghost" onClick={() => {
+                    navigator.clipboard.writeText("8072287744");
+                    toast.success("UPI ID copied");
+                  }}>
+                    <Copy className="h-4 w-4" />
+                  </Button>
+                </div>
               </CardContent>
             </Card>
           )}
@@ -546,15 +543,6 @@ function MemberDashboard() {
                             <Download className="mr-1 h-3 w-3" /> Receipt
                           </Button>
                         )}
-                        {(p.status === "pending" || p.status === "overdue") && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => openVerifyDialog(p)}
-                          >
-                            I've paid
-                          </Button>
-                        )}
                         {p.status === "awaiting_verification" && (
                           <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                             <Clock className="h-3 w-3" /> Submitted — verifying
@@ -575,38 +563,12 @@ function MemberDashboard() {
             </CardContent>
           </Card>
 
-          {/* ── Verification dialog: member submits UTR, staff confirms later ── */}
-          <Dialog open={verifyDialogOpen} onOpenChange={setVerifyDialogOpen}>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Confirm your UPI payment</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-3 text-sm">
-                <p className="text-muted-foreground">
-                  After paying {verifyPayment ? INR(verifyPayment.amount) : ""} via UPI, enter
-                  the UTR / transaction reference number shown in your UPI app's payment
-                  history. Staff will check this against the gym's bank statement and confirm
-                  your payment — it won't be marked paid automatically.
-                </p>
-                <div>
-                  <Label>UTR / Transaction reference</Label>
-                  <Input
-                    value={utrInput}
-                    onChange={(e) => setUtrInput(e.target.value)}
-                    placeholder="e.g. 123456789012"
-                  />
-                </div>
-              </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setVerifyDialogOpen(false)}>
-                  Cancel
-                </Button>
-                <Button onClick={submitVerification} disabled={submittingVerification}>
-                  {submittingVerification ? "Submitting…" : "Submit for verification"}
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+          <Card>
+            <CardContent className="py-3 text-sm text-muted-foreground">
+              After paying via UPI, send the payment screenshot to the gym reception on WhatsApp
+              or show it at the counter for confirmation.
+            </CardContent>
+          </Card>
         </TabsContent>
 
         {/* ── ATTENDANCE ── */}

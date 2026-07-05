@@ -1,5 +1,5 @@
 import { Link, useNavigate } from "@tanstack/react-router";
-import { Bell, LogOut, LayoutDashboard, Shield, Dumbbell } from "lucide-react";
+import { LogOut, LayoutDashboard, Shield, Dumbbell } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/use-auth";
 import logo from "@/assets/logo.png";
@@ -7,12 +7,10 @@ import logo from "@/assets/logo.png";
 export function AppShell({
   title,
   subtitle,
-  notifCount = 0,
   children,
 }: {
   title: string;
   subtitle?: string;
-  notifCount?: number;
   children: React.ReactNode;
 }) {
   const navigate = useNavigate();
@@ -43,14 +41,6 @@ export function AppShell({
           </nav>  
 
           <div className="flex items-center gap-2">
-            <Button variant="ghost" size="icon" className="relative">
-              <Bell className="h-4 w-4" />
-              {notifCount > 0 && (
-                <span className="absolute right-1 top-1 grid h-4 min-w-4 place-items-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground">
-                  {notifCount > 9 ? "9+" : notifCount}
-                </span>
-              )}
-            </Button>
             <Button variant="ghost" size="icon" onClick={handleSignOut} aria-label="Sign out">
               <LogOut className="h-4 w-4" />
             </Button>

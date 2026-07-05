@@ -43,7 +43,7 @@ export function SiteFooter() {
           <ul className="mt-3 space-y-2 text-sm text-muted-foreground">
 <li className="flex gap-2"><MapPin className="h-4 w-4 mt-0.5 text-primary shrink-0" /> {gym.locationText}</li>
             <li className="flex gap-2"><Phone className="h-4 w-4 mt-0.5 text-primary shrink-0" /> +91 8072 287 744</li>
-            <li className="flex gap-2"><Mail className="h-4 w-4 mt-0.5 text-primary shrink-0" /> srgym@gmail.com</li>
+            <li className="flex gap-2"><Mail className="h-4 w-4 mt-0.5 text-primary shrink-0" /> srgym2019@gmail.com</li>
           </ul>
         </div>
       </div>

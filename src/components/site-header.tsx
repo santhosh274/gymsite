@@ -102,9 +102,6 @@ export function SiteHeader() {
                   <Button asChild variant="outline">
                     <Link to="/auth" onClick={() => setOpen(false)}>Login</Link>
                   </Button>
-                  <Button asChild className="bg-gradient-red text-primary-foreground">
-                    <Link to="/auth" onClick={() => setOpen(false)}>Join Now</Link>
-                  </Button>
                 </>
               )}
             </div>

@@ -87,7 +87,7 @@ function Contact() {
             {[
               { icon: MapPin, title: "Visit", body: gymLocation },
               { icon: Phone, title: "Call", body: "+91 80722 87744" },
-              { icon: Mail, title: "Email", body: "srgym@gmail.com" },
+              { icon: Mail, title: "Email", body: "srgym2019@gmail.com" },
             ].map((c) => (
               <div key={c.title} className="flex gap-4 rounded-xl border border-border bg-surface p-5">
                 <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-gradient-red">

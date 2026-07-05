@@ -50,7 +50,6 @@ function Admin() {
             <TabsTrigger value="attendance" className="text-xs sm:text-sm px-3 py-1.5">Attendance</TabsTrigger>
             <TabsTrigger value="due"        className="text-xs sm:text-sm px-3 py-1.5">Due</TabsTrigger>
             <TabsTrigger value="plans"      className="text-xs sm:text-sm px-3 py-1.5">Plans</TabsTrigger>
-            <TabsTrigger value="notifs"     className="text-xs sm:text-sm px-3 py-1.5">Broadcast</TabsTrigger>
             <TabsTrigger value="holidays"   className="text-xs sm:text-sm px-3 py-1.5">Holidays</TabsTrigger>
           </TabsList>
         </div>
@@ -60,7 +59,6 @@ function Admin() {
         <TabsContent value="attendance" className="mt-4"><AttendanceTab /></TabsContent>
         <TabsContent value="due"        className="mt-4"><DuePaymentsTab /></TabsContent>
         <TabsContent value="plans"      className="mt-4"><PlansTab /></TabsContent>
-        <TabsContent value="notifs"     className="mt-4"><BroadcastTab /></TabsContent>
         <TabsContent value="holidays"   className="mt-4"><HolidaysTab /></TabsContent>
       </Tabs>
     </AppShell>
@@ -517,10 +515,6 @@ function ActiveMembersTab() {
    DUE PAYMENTS
 ───────────────────────────────────────────── */
 function DuePaymentsTab() {
-  const qc = useQueryClient();
-  const [tab, setTab] = useState<"due" | "history">("due");
-  const [justPaidIds, setJustPaidIds] = useState<Set<string>>(new Set());
-
   const { data: members = [], isLoading } = useQuery({
     queryKey: ["a-due-payments"],
     queryFn: async () => (await supabase.rpc("admin_get_members")).data ?? [],
@@ -530,8 +524,6 @@ function DuePaymentsTab() {
   const dueMembers = useMemo(() => {
   return (members as any[])
     .filter((m: any) => {
-      if (justPaidIds.has(m.id)) return false;
-
       const latest = m.memberships?.sort(
         (a: any, b: any) => (a.end_date < b.end_date ? 1 : -1)
       )[0];
@@ -553,46 +545,7 @@ function DuePaymentsTab() {
 
       return aEnd < bEnd ? -1 : 1;
     });
-}, [members, justPaidIds]);
-
-  const { data: allPayments = [], isLoading: payLoading } = useQuery({
-    queryKey: ["a-payment-history"],
-    queryFn: async () =>
-      (await supabase.from("payments").select("*, profiles(full_name, phone)").order("paid_at", { ascending: false }).limit(200)).data ?? [],
-    staleTime: 60000,
-  });
-
-  async function markPaidOffline(member: any) {
-    const latest = member.memberships?.sort((a: any, b: any) => (a.end_date < b.end_date ? 1 : -1))[0];
-    if (!latest) return toast.error("No membership found");
-    const { data: pending } = await supabase.from("payments").select("id").eq("user_id", member.id).in("status", ["pending", "overdue", "awaiting_verification"]).limit(1);
-    const recNo = "OFF-" + Math.random().toString(36).slice(2, 8).toUpperCase();
-    if (pending && pending.length > 0) {
-      const { error } = await supabase.from("payments").update({
-        status: "paid", paid_at: new Date().toISOString(), receipt_no: recNo, membership_id: latest.id,
-      }).eq("id", pending[0].id);
-      if (error) return toast.error(error.message);
-    } else {
-      const { error } = await supabase.from("payments").insert({
-        user_id: member.id, membership_id: latest.id, amount: latest.membership_plans?.price ?? 0,
-        due_date: latest.end_date, paid_at: new Date().toISOString(), status: "paid", receipt_no: recNo,
-      });
-      if (error) return toast.error(error.message);
-    }
-    const { error: paidErr } = await supabase.from("memberships").update({ paid: true }).eq("id", latest.id);
-    if (paidErr) return toast.error("Payment recorded but failed to update membership: " + paidErr.message);
-    await supabase.from("notifications").insert({
-      user_id: member.id, title: "Payment recorded",
-      message: `Offline payment received for ${latest.membership_plans?.name ?? "membership"}. Thank you!`, type: "success",
-    });
-    toast.success(`Marked ${member.full_name} as paid (offline)`);
-    setJustPaidIds((prev) => new Set(prev).add(member.id));
-    qc.invalidateQueries({ queryKey: ["a-due-payments"] });
-    qc.invalidateQueries({ queryKey: ["a-payment-history"] });
-    qc.invalidateQueries({ queryKey: ["a-paid-membership-ids"] });
-    qc.invalidateQueries({ queryKey: ["a-active-members"] });
-    qc.invalidateQueries({ queryKey: ["a-all-payments-live"] });
-  }
+}, [members]);
 
   function urgencyBadge(endDate: string) {
     const days = daysBetween(endDate);
@@ -609,32 +562,22 @@ function DuePaymentsTab() {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <Tabs value={tab} onValueChange={(v) => setTab(v as any)}>
-          <TabsList className="w-full sm:w-auto">
-            <TabsTrigger value="due" className="flex-1 sm:flex-none">
-              Due / Expiring
-              {dueMembers.length > 0 && (
-                <Badge variant="destructive" className="ml-2 text-xs">{dueMembers.length}</Badge>
-              )}
-            </TabsTrigger>
-            <TabsTrigger value="history" className="flex-1 sm:flex-none">History</TabsTrigger>
-          </TabsList>
+        <div>
+          
 
-          <TabsContent value="due" className="mt-4">
-            <div className="hidden sm:block overflow-auto rounded-lg border border-border">
-              <table className="w-full text-sm">
-                <thead className="bg-muted text-xs uppercase text-muted-foreground">
-                  <tr>
-                    <th className="px-4 py-3 text-left">Member</th>
-                    <th className="px-4 py-3 text-left">Contact</th>
-                    <th className="px-4 py-3 text-left">Plan</th>
-                    <th className="px-4 py-3 text-left">Expires</th>
-                    <th className="px-4 py-3 text-left">Amount</th>
-                    <th className="px-4 py-3 text-left">Action</th>
-                  </tr>
-                </thead>
+          <div className="hidden sm:block overflow-auto rounded-lg border border-border">
+            <table className="w-full text-sm">
+              <thead className="bg-muted text-xs uppercase text-muted-foreground">
+                <tr>
+                  <th className="px-4 py-3 text-left">Member</th>
+                  <th className="px-4 py-3 text-left">Contact</th>
+                  <th className="px-4 py-3 text-left">Plan</th>
+                  <th className="px-4 py-3 text-left">Expires</th>
+                  <th className="px-4 py-3 text-left">Amount</th>
+                </tr>
+              </thead>
                 <tbody>
-                  {isLoading && <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">Loading…</td></tr>}
+                  {isLoading && <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">Loading…</td></tr>}
                   {!isLoading && dueMembers.map((m: any) => {
                     const latest = m.memberships?.sort((a: any, b: any) => (a.end_date < b.end_date ? 1 : -1))[0];
                     const amount = latest?.membership_plans?.price ?? 0;
@@ -647,17 +590,11 @@ function DuePaymentsTab() {
                         <td className="px-4 py-3">{latest?.membership_plans?.name ?? "—"}</td>
                         <td className="px-4 py-3">{latest ? urgencyBadge(latest.end_date) : "—"}</td>
                         <td className="px-4 py-3 font-semibold text-destructive">{INR(amount)}</td>
-                        <td className="px-4 py-3">
-                          <Button size="sm" variant="outline" className="border-green-500 text-green-600 hover:bg-green-50"
-                            onClick={() => { if (confirm(`Mark ${m.full_name} as paid offline?`)) markPaidOffline(m); }}>
-                            <CheckCircle2 className="mr-1.5 h-4 w-4" /> Paid Offline
-                          </Button>
-                        </td>
                       </tr>
                     );
                   })}
                   {!isLoading && dueMembers.length === 0 && (
-                    <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">🎉 No due payments within 7 days.</td></tr>
+                    <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">🎉 No due payments within 7 days.</td></tr>
                   )}
                 </tbody>
               </table>
@@ -685,78 +622,12 @@ function DuePaymentsTab() {
                       <span className="text-muted-foreground">Plan: <span className="text-foreground">{latest?.membership_plans?.name ?? "—"}</span></span>
                       {latest && urgencyBadge(latest.end_date)}
                     </div>
-                    <Button size="sm" variant="outline" className="w-full border-green-500 text-green-600 hover:bg-green-50"
-                      onClick={() => { if (confirm(`Mark ${m.full_name} as paid offline?`)) markPaidOffline(m); }}>
-                      <CheckCircle2 className="mr-1.5 h-4 w-4" /> Mark Paid Offline
-                    </Button>
                   </div>
                 );
               })}
             </div>
-          </TabsContent>
+          </div>
 
-          <TabsContent value="history" className="mt-4">
-            <div className="hidden sm:block overflow-auto rounded-lg border border-border">
-              <table className="w-full text-sm">
-                <thead className="bg-muted text-xs uppercase text-muted-foreground">
-                  <tr>
-                    <th className="px-4 py-3 text-left">Member</th>
-                    <th className="px-4 py-3 text-left">Amount</th>
-                    <th className="px-4 py-3 text-left">Status</th>
-                    <th className="px-4 py-3 text-left">Paid on</th>
-                    <th className="px-4 py-3 text-left">Due date</th>
-                    <th className="px-4 py-3 text-left">Receipt</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {payLoading && <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">Loading…</td></tr>}
-                  {!payLoading && (allPayments as any[]).map((p: any) => (
-                    <tr key={p.id} className="border-t border-border">
-                      <td className="px-4 py-3 font-medium">
-                        {p.profiles?.full_name ?? "—"}
-                        {p.profiles?.phone && <div className="text-xs text-muted-foreground">{p.profiles.phone}</div>}
-                      </td>
-                      <td className="px-4 py-3 font-semibold">{INR(p.amount)}</td>
-                      <td className="px-4 py-3"><PayStatusBadge status={p.status} /></td>
-                      <td className="px-4 py-3 text-muted-foreground">{p.paid_at ? fmtDate(p.paid_at) : <span className="italic text-xs">—</span>}</td>
-                      <td className="px-4 py-3 text-muted-foreground">{fmtDate(p.due_date)}</td>
-                      <td className="px-4 py-3 text-xs text-muted-foreground font-mono">{p.receipt_no ?? "—"}</td>
-                    </tr>
-                  ))}
-                  {!payLoading && allPayments.length === 0 && (
-                    <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">No payment records found.</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="sm:hidden space-y-2">
-              {payLoading && <p className="text-center text-sm text-muted-foreground py-6">Loading…</p>}
-              {!payLoading && allPayments.length === 0 && (
-                <p className="text-center text-sm text-muted-foreground py-6">No payment records found.</p>
-              )}
-              {!payLoading && (allPayments as any[]).map((p: any) => (
-                <div key={p.id} className="rounded-lg border border-border p-3 space-y-1.5">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <p className="font-medium text-sm">{p.profiles?.full_name ?? "—"}</p>
-                      {p.profiles?.phone && <p className="text-xs text-muted-foreground">{p.profiles.phone}</p>}
-                    </div>
-                    <div className="text-right">
-                      <p className="font-semibold text-sm">{INR(p.amount)}</p>
-                      <PayStatusBadge status={p.status} />
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
-                    {p.paid_at && <span>Paid: {fmtDate(p.paid_at)}</span>}
-                    <span>Due: {fmtDate(p.due_date)}</span>
-                    {p.receipt_no && <span className="font-mono">{p.receipt_no}</span>}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </TabsContent>
-        </Tabs>
       </CardContent>
     </Card>
   );
@@ -839,9 +710,11 @@ function MembersTab() {
                     </td>
                     <td className="px-4 py-3">{latest?.membership_plans?.name ?? "—"}</td>
                     <td className="px-4 py-3">
-                      {latest
-                        ? <Badge variant={expired ? "destructive" : "default"}>{fmtDate(latest.end_date)}</Badge>
-                        : <Badge variant="secondary">none</Badge>}
+                      {latest?.paid
+                        ? <Badge variant="outline" className="border-green-400 text-green-600">Paid</Badge>
+                        : latest
+                          ? <Badge variant={expired ? "destructive" : "default"}>{fmtDate(latest.end_date)}</Badge>
+                          : <Badge variant="secondary">none</Badge>}
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">{fmtDate(m.joined_at)}</td>
                     <td className="px-4 py-3">
@@ -889,9 +762,11 @@ function MembersTab() {
                 </div>
                 <div className="flex flex-wrap gap-2 text-xs items-center">
                   <span className="text-muted-foreground">Plan: <span className="text-foreground font-medium">{latest?.membership_plans?.name ?? "—"}</span></span>
-                  {latest
-                    ? <Badge variant={expired ? "destructive" : "default"} className="text-xs">{fmtDate(latest.end_date)}</Badge>
-                    : <Badge variant="secondary" className="text-xs">none</Badge>}
+                  {latest?.paid
+                    ? <Badge variant="outline" className="border-green-400 text-green-600 text-xs">Paid</Badge>
+                    : latest
+                      ? <Badge variant={expired ? "destructive" : "default"} className="text-xs">{fmtDate(latest.end_date)}</Badge>
+                      : <Badge variant="secondary" className="text-xs">none</Badge>}
                 </div>
                 <p className="text-xs text-muted-foreground">Joined {fmtDate(m.joined_at)}</p>
                 <div className="flex gap-1.5 pt-1">
@@ -1157,7 +1032,7 @@ function AssignDialog({ member, onDone }: any) {
       user_id: member.id,
       membership_id: mem.id,
       amount: plan.price,
-      due_date: start,
+      due_date: endDate,
       status: "pending",   // ← always pending until paid offline or via UPI
       paid_at: null,
       receipt_no: null,
@@ -1447,63 +1322,6 @@ function PlansTab() {
 /* ─────────────────────────────────────────────
    BROADCAST
 ───────────────────────────────────────────── */
-function BroadcastTab() {
-  const [form, setForm] = useState({ title: "", message: "", type: "info" });
-  const [sending, setSending] = useState(false);
-
-  async function send() {
-    if (!form.title || !form.message) return toast.error("Title & message required");
-    setSending(true);
-    try {
-      const { data: profiles, error: profilesErr } = await supabase.from("profiles").select("id");
-      if (profilesErr) throw profilesErr;
-      if (!profiles || profiles.length === 0) { toast.info("No members to notify."); return; }
-      const rows = profiles.map((p: any) => ({ user_id: p.id, title: form.title, message: form.message, type: form.type }));
-      const { error } = await supabase.from("notifications").insert(rows);
-      if (error) throw error;
-      toast.success(`Broadcast sent to ${profiles.length} member${profiles.length !== 1 ? "s" : ""}`);
-      setForm({ title: "", message: "", type: "info" });
-    } catch (err: any) {
-      toast.error(err.message || "Failed to send broadcast");
-    } finally {
-      setSending(false);
-    }
-  }
-
-  return (
-    <Card className="max-w-xl">
-      <CardHeader>
-        <CardTitle className="text-base flex items-center gap-2">
-          <Megaphone className="h-4 w-4 text-primary" /> Broadcast Notification
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <p className="text-sm text-muted-foreground">Sends a notification to every member's inbox.</p>
-        <div><Label>Title</Label>
-          <Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="e.g. Gym closed tomorrow" /></div>
-        <div><Label>Message</Label>
-          <Textarea rows={4} value={form.message} onChange={(e) => setForm({ ...form, message: e.target.value })} placeholder="Write your message here…" /></div>
-        <div>
-          <Label>Type</Label>
-          <Select value={form.type} onValueChange={(v) => setForm({ ...form, type: v })}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="info">Info</SelectItem>
-              <SelectItem value="success">Success</SelectItem>
-              <SelectItem value="warning">Warning</SelectItem>
-              <SelectItem value="holiday">Holiday</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <Button onClick={send} disabled={sending} className="w-full bg-gradient-red text-primary-foreground">
-          <Megaphone className="mr-1.5 h-4 w-4" />
-          {sending ? "Sending…" : "Send to all members"}
-        </Button>
-      </CardContent>
-    </Card>
-  );
-}
-
 /* ─────────────────────────────────────────────
    HOLIDAYS
 ───────────────────────────────────────────── */
