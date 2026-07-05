@@ -46,17 +46,9 @@ function MemberDashboard() {
   const { data: profile } = useQuery({
     queryKey: ["profile", user?.id],
     queryFn: async () =>
-      (await supabase.from("profiles").select("*").eq("id", user!.id).maybeSingle()).data,
+      (await supabase.from("profiles").select("full_name, phone, address, emergency_contact").eq("id", user!.id).maybeSingle()).data,
     enabled: !!user,
-  });
-
-  const { data: authData } = useQuery({
-    queryKey: ["auth-name", user?.email],
-    queryFn: async () => {
-      const userId = user!.email!.split("@")[0];
-      return (await supabase.from("auth").select("name").eq("user_id", userId).maybeSingle()).data;
-    },
-    enabled: !!user,
+    staleTime: 5 * 60 * 1000,
   });
 
   const { data: membership } = useQuery({
@@ -72,6 +64,7 @@ function MemberDashboard() {
           .maybeSingle()
       ).data,
     enabled: !!user,
+    staleTime: 60 * 1000,
   });
 
   const { data: payments = [] } = useQuery({
@@ -80,11 +73,13 @@ function MemberDashboard() {
       (
         await supabase
           .from("payments")
-          .select("*")
+          .select("id, amount, due_date, status, paid_at, receipt_no, created_at")
           .eq("user_id", user!.id)
           .order("due_date", { ascending: false })
+          .limit(50)
       ).data ?? [],
     enabled: !!user,
+    staleTime: 30 * 1000,
   });
 
   const { data: attendance = [] } = useQuery({
@@ -93,40 +88,28 @@ function MemberDashboard() {
       (
         (await supabase
           .from("attendance")
-          .select("*")
+          .select("id, date, check_in, check_out")
           .eq("user_id", user!.id)
           .order("date", { ascending: false })
           .limit(60)) as any
       ).data ?? [],
     enabled: !!user,
+    staleTime: 30 * 1000,
   });
 
-  const { data: workouts = [] } = useQuery({
-    queryKey: ["workouts", user?.id],
+  const { data: memberPlans = [] } = useQuery({
+    queryKey: ["member-plans", user?.id],
     queryFn: async () =>
       (
         await supabase
           .from("member_plans")
-          .select("*")
+          .select("id, title, content, type, assigned_at")
           .eq("user_id", user!.id)
-          .eq("type", "workout")
+          .in("type", ["workout", "diet"])
           .order("assigned_at", { ascending: false })
       ).data ?? [],
     enabled: !!user,
-  });
-
-  const { data: diets = [] } = useQuery({
-    queryKey: ["diets", user?.id],
-    queryFn: async () =>
-      (
-        await supabase
-          .from("member_plans")
-          .select("*")
-          .eq("user_id", user!.id)
-          .eq("type", "diet")
-          .order("assigned_at", { ascending: false })
-      ).data ?? [],
-    enabled: !!user,
+    staleTime: 5 * 60 * 1000,
   });
 
   const { data: notifs = [] } = useQuery({
@@ -141,7 +124,11 @@ function MemberDashboard() {
           .limit(30)
       ).data ?? [],
     enabled: !!user,
+    staleTime: 30 * 1000,
   });
+
+  const workouts = memberPlans.filter((p: any) => p.type === "workout");
+  const diets = memberPlans.filter((p: any) => p.type === "diet");
 
   /* ── Real-time subscriptions ── */
   useEffect(() => {
@@ -162,8 +149,7 @@ function MemberDashboard() {
   }, [user, qc]);
 
   /* ── Derived values ── */
-  const displayName =
-    authData?.name ?? profile?.full_name?.split(" ")[0] ?? "Athlete";
+  const displayName = profile?.full_name?.split(" ")[0] ?? "Athlete";
   const unread = notifs.filter((n) => !n.is_read).length;
   const daysLeft = membership ? daysBetween(membership.end_date) : null;
   const expired = daysLeft !== null && daysLeft < 0;

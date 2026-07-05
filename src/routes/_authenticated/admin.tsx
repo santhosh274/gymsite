@@ -1,5 +1,5 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
@@ -149,14 +149,15 @@ function AttendanceTab() {
       if (error) throw error;
       return data ?? [];
     },
+    staleTime: 30 * 1000,
   });
 
-  async function handleCheckOut(id: string, memberName: string) {
+  const handleCheckOut = useCallback(async (id: string, memberName: string) => {
     const { error } = await supabase.rpc("checkout_member", { p_id: id });
     if (error) return toast.error(error.message);
     toast.success(`${memberName} checked out`);
     qc.invalidateQueries({ queryKey: ["a-attendance-date", selectedDate] });
-  }
+  }, [qc, selectedDate]);
 
   const filtered = checkins.filter((c: any) =>
     !q || c.profiles?.full_name?.toLowerCase().includes(q.toLowerCase())
@@ -333,13 +334,16 @@ function ActiveMembersTab() {
     staleTime: 60000,
   });
 
-  // Fetch all payments directly — don't rely on RPC to include them
+  // Fetch recent payments directly — don't rely on RPC to include them
   const { data: allPaymentsRaw = [], isLoading: paymentsLoading } = useQuery({
     queryKey: ["a-all-payments-live"],
     queryFn: async () => {
+      const cutoff = new Date();
+      cutoff.setFullYear(cutoff.getFullYear() - 2);
       const { data, error } = await supabase
         .from("payments")
-        .select("id, user_id, membership_id, amount, due_date, status, paid_at, receipt_no");
+        .select("id, user_id, membership_id, amount, due_date, status, paid_at, receipt_no")
+        .gte("due_date", cutoff.toISOString());
       if (error) throw error;
       return data ?? [];
     },
@@ -1249,6 +1253,7 @@ function PlansTab() {
   const { data: plans = [] } = useQuery({
     queryKey: ["a-plans"],
     queryFn: async () => (await supabase.from("membership_plans").select("*").order("duration_months")).data ?? [],
+    staleTime: 5 * 60 * 1000,
   });
   const [prices, setPrices] = useState<Record<string, number>>({});
 
@@ -1330,6 +1335,7 @@ function HolidaysTab() {
   const { data: holidays = [] } = useQuery({
     queryKey: ["a-holidays"],
     queryFn: async () => (await supabase.from("holidays").select("*").order("date")).data ?? [],
+    staleTime: 5 * 60 * 1000,
   });
   const [form, setForm] = useState({ date: "", title: "", description: "" });
   const [adding, setAdding] = useState(false);
@@ -1338,9 +1344,14 @@ function HolidaysTab() {
     if (!form.date || !form.title) return toast.error("Date & title required");
     setAdding(true);
     try {
-      const { error } = await supabase.from("holidays").insert(form);
+      const payload = {
+        date: form.date.trim(),
+        title: form.title.trim().slice(0, 200),
+        description: form.description.trim().slice(0, 1000) || "",
+      };
+      const { error } = await supabase.from("holidays").insert(payload);
       if (error) throw error;
-      const { data: profiles, error: pErr } = await supabase.from("profiles").select("id");
+      const { data: profiles, error: pErr } = await supabase.from("profiles").select("id").limit(500);
       if (pErr) throw pErr;
       if (profiles && profiles.length > 0) {
         const rows = profiles.map((p: any) => ({

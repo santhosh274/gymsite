@@ -139,16 +139,17 @@ async function main() {
 
   const synthEmail = (id: string) => `${id.toLowerCase()}@srgym.local`;
 
-  // 1) Create admin auth user and admin role (single admin id)
-  const adminId = "ADMIN001";
-  const adminPassword = "admintest";
+  // 1) Create admin auth user and admin role (single admin)
+const ADMIN_ID = "admin";
+const ADMIN_PASSWORD = "Ramesh@2019";
+const ADMIN_EMAIL = "admin@srgym.local";
 
-  const adminRow = rows.find((r) => cleanCell(r[COL_IDNO]) === adminId);
+  const adminRow = rows.find((r) => cleanCell(r[COL_IDNO]) === ADMIN_ID);
   const adminFullName = cleanCell(adminRow?.[COL_FULLNAME]) || "SRGYM Admin";
 
   const adminUser = await ensureAuthUser({
-    email: synthEmail(adminId),
-    password: adminPassword,
+    email: ADMIN_EMAIL,
+    password: ADMIN_PASSWORD,
     full_name: adminFullName,
   });
 
@@ -157,7 +158,7 @@ async function main() {
   const { error: profErrAdmin } = await SUPABASE.from("profiles").upsert(
     {
       id: adminUser.id,
-      email: synthEmail(adminId),
+      email: ADMIN_EMAIL,
       full_name: adminFullName,
       phone: "",
       address: "",
@@ -178,7 +179,7 @@ async function main() {
     if (!idNoRaw) continue;
 
     const memberId = normalizeIdNo(idNoRaw);
-    if (memberId === adminId) continue;
+    if (memberId === ADMIN_ID) continue;
 
     const full_name = cleanCell(r[COL_FULLNAME]);
     const password = inferMemberPassword(memberId);
@@ -230,26 +231,6 @@ async function main() {
     process.exit(1);
   }
 
-  // Create the test auth users: admin123 and member123
-  const testAdminId = "admin123";
-  const testMemberId = "member123";
-
-  console.log("Creating test auth user: admin123...");
-  const testAdminUser = await ensureAuthUser({
-    email: synthEmail(testAdminId),
-    password: "admintest",
-    full_name: "Admin Test",
-  });
-  await upsertRole(testAdminUser.id, "admin");
-
-  console.log("Creating test auth user: member123...");
-  const testMemberUser = await ensureAuthUser({
-    email: synthEmail(testMemberId),
-    password: "membertest",
-    full_name: "Member Test",
-  });
-  await upsertRole(testMemberUser.id, "member");
-
   // Populate auth table with all credentials
   console.log("Populating auth table...");
 
@@ -265,17 +246,15 @@ async function main() {
     console.log(`  Auth entry: ${userId} / ${password} (${role})`);
   }
 
-  // Admin entries
-  await upsertAuth(adminId, adminPassword, "admin");
-  await upsertAuth(testAdminId, "admintest", "admin");
+  // Admin entry
+  await upsertAuth(ADMIN_ID, ADMIN_PASSWORD, "admin");
 
   // Member entries
-  await upsertAuth(testMemberId, "membertest", "member");
-
   for (const r of rows) {
     const idNoRaw = cleanCell(r[COL_IDNO]);
     if (!idNoRaw) continue;
     const memberId = normalizeIdNo(idNoRaw);
+    if (memberId === ADMIN_ID) continue;
     const password = inferMemberPassword(memberId);
     await upsertAuth(memberId, password, "member");
   }
