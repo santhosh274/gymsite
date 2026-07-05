@@ -141,7 +141,7 @@ async function main() {
 
   // 1) Create admin auth user and admin role (single admin)
 const ADMIN_ID = "admin";
-const ADMIN_PASSWORD = "Ramesh@2019";
+const ADMIN_PASSWORD = "admin001"; // change this after seeding for security 
 const ADMIN_EMAIL = "admin@srgym.local";
 
   const adminRow = rows.find((r) => cleanCell(r[COL_IDNO]) === ADMIN_ID);
