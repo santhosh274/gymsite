@@ -42,14 +42,16 @@ export const Route = createFileRoute("/_authenticated/admin")({
 
 function Admin() {
   const { user } = useAuth();
-  const { data: adminProfile } = useQuery({
-    queryKey: ["admin-profile", user?.id],
-    queryFn: async () =>
-      (await supabase.from("profiles").select("full_name").eq("id", user!.id).maybeSingle()).data,
+  const { data: authRow } = useQuery({
+    queryKey: ["auth-name", user?.id],
+    queryFn: async () => {
+      const uid = user?.email?.split("@")[0] ?? "";
+      return (await supabase.from("auth").select("name").eq("user_id", uid).maybeSingle()).data;
+    },
     enabled: !!user,
     staleTime: 5 * 60 * 1000,
   });
-  const displayName = adminProfile?.full_name?.split(" ")[0] ?? "Admin";
+  const displayName = authRow?.name?.split(" ")[0] ?? "Admin";
   return (
     <AppShell title={`Hey, ${displayName} 👋`} subtitle="Manage your gym">
       <Tabs defaultValue="members">

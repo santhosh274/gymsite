@@ -43,6 +43,15 @@ function MemberDashboard() {
   const qc = useQueryClient();
 
   /* ── Data fetching ── */
+  const { data: authRow } = useQuery({
+    queryKey: ["auth-name", user?.id],
+    queryFn: async () => {
+      const uid = user?.email?.split("@")[0] ?? "";
+      return (await supabase.from("auth").select("name").eq("user_id", uid).maybeSingle()).data;
+    },
+    enabled: !!user,
+    staleTime: 5 * 60 * 1000,
+  });
   const { data: profile } = useQuery({
     queryKey: ["profile", user?.id],
     queryFn: async () =>
@@ -149,7 +158,7 @@ function MemberDashboard() {
   }, [user, qc]);
 
   /* ── Derived values ── */
-  const displayName = profile?.full_name?.split(" ")[0] ?? "Athlete";
+  const displayName = authRow?.name?.split(" ")[0] ?? "Athlete";
   const unread = notifs.filter((n) => !n.is_read).length;
   const daysLeft = membership ? daysBetween(membership.end_date) : null;
   const expired = daysLeft !== null && daysLeft < 0;
