@@ -845,27 +845,12 @@ function AddUserDialog({ onDone }: { onDone: () => void }) {
     if (!idNo || !password || !fullName) return toast.error("ID No, password, and name are required.");
     setLoading(true);
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const adminToken   = sessionData.session?.access_token;
-      const adminRefresh = sessionData.session?.refresh_token;
-      const adminUserId  = sessionData.session?.user?.id;
-      if (!adminToken) throw new Error("No admin session");
-
-      const email = `${idNo.trim().toLowerCase()}@srgym.local`;
-      const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({
-        email, password,
-        options: { data: { full_name: fullName.trim(), phone: phone.trim() } },
+      const { error: rpcErr } = await supabase.rpc("admin_create_user", {
+        p_id_no: idNo.trim(),
+        p_password: password,
+        p_full_name: fullName.trim() || undefined,
+        p_phone: phone.trim() || undefined,
       });
-      if (signUpErr) throw signUpErr;
-      if (!signUpData?.user) throw new Error("Signup returned no user");
-
-      const { error: restoreErr } = await supabase.auth.setSession({ access_token: adminToken, refresh_token: adminRefresh! });
-      if (restoreErr) throw new Error(`Failed to restore admin session: ${restoreErr.message}`);
-
-      const { data: verifySession } = await supabase.auth.getSession();
-      if (verifySession.session?.user?.id !== adminUserId) throw new Error("Session was not properly restored");
-
-      const { error: rpcErr } = await supabase.rpc("admin_create_user", { p_id_no: idNo.trim(), p_password: password });
       if (rpcErr) throw rpcErr;
 
       toast.success(`User "${fullName}" created (ID: ${idNo})`);

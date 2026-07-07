@@ -64,7 +64,9 @@ $$;
 -- 5. Fix admin_create_user: prevent overwriting existing admin accounts
 CREATE OR REPLACE FUNCTION public.admin_create_user(
   p_id_no text,
-  p_password text
+  p_password text,
+  p_full_name text DEFAULT NULL,
+  p_phone text DEFAULT NULL
 )
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -73,6 +75,7 @@ SET search_path = ''
 AS $$
 DECLARE
   v_existing_role text;
+  v_user_id uuid;
 BEGIN
   IF NOT public.has_role(auth.uid(), 'admin') THEN
     RAISE EXCEPTION 'Only admins can create users';
@@ -89,6 +92,15 @@ BEGIN
   ON CONFLICT (user_id) DO UPDATE
     SET password = EXCLUDED.password,
         role = 'member';
+
+  -- Update profile with provided name/phone (trigger creates profile with defaults)
+  SELECT id INTO v_user_id FROM auth.users WHERE email = lower(p_id_no) || '@srgym.local';
+  IF v_user_id IS NOT NULL THEN
+    UPDATE public.profiles
+    SET full_name = COALESCE(p_full_name, full_name),
+        phone = COALESCE(p_phone, phone)
+    WHERE id = v_user_id;
+  END IF;
 
   RETURN jsonb_build_object('user_id', p_id_no);
 END;

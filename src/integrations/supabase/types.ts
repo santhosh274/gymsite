@@ -495,6 +495,8 @@ export type Database = {
         Args: {
           p_id_no: string
           p_password: string
+          p_full_name?: string
+          p_phone?: string
         }
         Returns: Record<string, string>
       }
