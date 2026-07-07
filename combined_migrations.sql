@@ -867,7 +867,7 @@ BEGIN
   FROM public.attendance
   WHERE user_id = auth.uid() AND date = CURRENT_DATE;
 
-  IF v_count >= 3 THEN
+  IF v_count >= 3 THEN~
     RAISE EXCEPTION 'You can only check in 3 times per day';
   END IF;
 

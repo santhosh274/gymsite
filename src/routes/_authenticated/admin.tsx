@@ -8,6 +8,7 @@ import {
   KeyRound, Dumbbell, Utensils, Plus, X, ChevronLeft, ChevronRight,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/use-auth";
 import { AppShell } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -40,8 +41,17 @@ export const Route = createFileRoute("/_authenticated/admin")({
 });
 
 function Admin() {
+  const { user } = useAuth();
+  const { data: adminProfile } = useQuery({
+    queryKey: ["admin-profile", user?.id],
+    queryFn: async () =>
+      (await supabase.from("profiles").select("full_name").eq("id", user!.id).maybeSingle()).data,
+    enabled: !!user,
+    staleTime: 5 * 60 * 1000,
+  });
+  const displayName = adminProfile?.full_name?.split(" ")[0] ?? "Admin";
   return (
-    <AppShell title="Admin Control" subtitle="Manage your gym">
+    <AppShell title={`Hey, ${displayName} 👋`} subtitle="Manage your gym">
       <Tabs defaultValue="members">
         <div className="overflow-x-auto -mx-1 px-1">
           <TabsList className="inline-flex min-w-max gap-0.5 bg-muted rounded-lg p-1">
