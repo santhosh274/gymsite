@@ -15,9 +15,12 @@ export const Route = createFileRoute("/about")({
 
 function About() {
   return (
-    <div>
-      <section className="border-b border-border/50 bg-gradient-dark py-24">
-        <div className="mx-auto max-w-4xl px-4 text-center sm:px-6">
+    <div className="w-full overflow-x-hidden">
+      
+      {/* HERO SECTION */}
+      <section className="border-b border-border/50 bg-gradient-dark py-24 w-full">
+        {/* Swapped out max-w-4xl constraint to allow text structures to flow gracefully across screen spaces */}
+        <div className="w-full px-4 text-center sm:px-8">
           <p className="text-xs font-semibold uppercase tracking-widest text-primary">About us</p>
           <h1 className="mt-3 font-display text-4xl font-extrabold leading-tight sm:text-5xl lg:text-6xl">
             <span className="block">Built by lifters.</span>
@@ -30,8 +33,10 @@ function About() {
         </div>
       </section>
 
-      <section className="py-20">
-        <div className="mx-auto grid max-w-7xl gap-6 px-4 sm:px-6 md:grid-cols-3">
+      {/* CORE VALUE PILLARS */}
+      <section className="py-20 w-full">
+        {/* Changed layout wrappers to full width and adapted grid break properties */}
+        <div className="w-full grid gap-6 px-4 sm:px-8 sm:grid-cols-2 md:grid-cols-3">
           {[
             { icon: Target, title: "Our Mission", body: "Make premium strength training accessible to every body, every goal, every level." },
             { icon: Heart, title: "Our Promise", body: "Personalised programs, accountable coaches and a community that pushes you forward." },
@@ -48,8 +53,9 @@ function About() {
         </div>
       </section>
 
-      <section className="border-t border-border/50 bg-surface/30 py-20">
-        <div className="mx-auto grid max-w-7xl gap-12 px-4 sm:px-6 md:grid-cols-2">
+      {/* PURPOSE AND DATA STATS */}
+      <section className="border-t border-border/50 bg-surface/30 py-20 w-full">
+        <div className="w-full grid gap-12 px-4 sm:px-8 md:grid-cols-2">
           <div>
             <h2 className="font-display text-4xl font-extrabold">Why we exist</h2>
             <div className="mt-6 space-y-4 text-muted-foreground">
@@ -59,7 +65,7 @@ function About() {
                 community are with you on the journey.</p>
             </div>
           </div>
-          <dl className="grid grid-cols-2 gap-6">
+          <dl className="grid grid-cols-2 gap-6 w-full">
             {[
               { k: "500+", v: "Active members" },
               { k: "300+", v: "Transformations" },
